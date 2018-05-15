@@ -31,8 +31,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
     
     ########## initialize variables ##########
     final = data.frame(matrix(ncol=0,nrow=0))
-    params = read.csv(paste(RootFolder,"RScripts/parameters.csv",sep = ""))
-    TH.Limits = read.csv(paste(RootFolder,"RScripts/indices.csv",sep = ""))
+    params = read.csv("parameters.csv")
+    TH.Limits = read.csv("indices.csv")
     TH.Limits = subset(TH.Limits, TH.Limits$Include==1)
     Indices = as.vector(TH.Limits$Indices)
     #RootFolder = as.character(as.vector(params$value[params$name=="RootFolder"]))
@@ -112,6 +112,17 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
                                            ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4),-1,
                                                   ifelse(t0>=7,0,NA))))))
                )
+    }
+    
+    # this function convert score to opinion by company
+    scoreToOp <- function(temp) {
+        temp = temp[order(temp$AdjDate),]
+        temp$M.OP1 = scoreToOp1(temp$RF, temp$M.NA, temp$T1.M.NA, temp$T2.M.NA, temp$M.SCORE, temp$T1.M.SCORE, temp$T2.M.SCORE)
+        temp$M.OP2 = scoreToOp2(temp$RF, temp$M.NA, temp$T1.M.NA, temp$T2.M.NA, temp$M.SCORE, temp$T1.M.SCORE, temp$T2.M.SCORE)
+        temp = FillDown(temp, 'M.OP2')
+        temp$M.OP2[is.na(temp$M.OP2)] = -2
+        temp$M.OP = ifelse(temp$M.OP1==-3|temp$M.OP1==-1|temp$M.OP1==0|temp$M.OP1==1, temp$M.OP1, temp$M.OP2)    
+        return (temp)
     }
     
     # this function returns index monthly file
@@ -203,7 +214,121 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         return(df)
     }
     #test3 = ch_data("HPID")
+
+    # this function loads translation template
+    loadtrans <- function() {
         
+        ########## load translation file ##########
+        trans = read.xlsx(xlsxFile=paste(RootFolder, "Translation template.xlsx", sep = ""),
+                          sheet = "Bond translation",
+                          startRow = 14,
+                          detectDates = TRUE,
+                          na.strings = c(""),
+                          cols = c(1,5,17,18))
+        trans = subset(trans, is.na(trans$Bond.Ticker)==FALSE)
+        trans = subset(trans, trimws(trans$Bond.Ticker)!="")
+        # remove duplicated date + ticker
+        trans = trans %>% distinct(FROM.DATE.LINK,Bond.Ticker, .keep_all = TRUE)
+        trans = trans[order(trans$Bond.Ticker, trans$FROM.DATE.LINK),]
+        trans$index = seq.int(nrow(trans))-1
+        trans$index1 = trans$index + 1
+        trans$index = paste(trans$Bond.Ticker, trans$index)
+        trans$index1 = paste(trans$Bond.Ticker, trans$index1)
+        trans = merge(trans, trans[ , c("index","FROM.DATE.LINK")],
+                      by.x="index1", by.y="index", all.x=TRUE)
+        names(trans)[names(trans) == "FROM.DATE.LINK.x"] = "FROM.DATE.LINK"
+        names(trans)[names(trans) == "FROM.DATE.LINK.y"] = "TO.DATE.LINK"
+        trans$TO.DATE.LINK = ifelse(is.na(trans$TO.DATE.LINK), "2020-01-01", trans$TO.DATE.LINK)
+        # convert TO.DATE.LINK back to date type
+        trans$TO.DATE.LINK =as.Date(trans$TO.DATE.LINK, "%Y-%m-%d")
+        # convert FROM.DATE.LINK back to date type
+        trans$FROM.DATE.LINK =as.Date(trans$FROM.DATE.LINK, "%Y-%m-%d")
+        trans$ID_BB_UNIQUE = gsub("EQ", "", trans$ID_BB_UNIQUE)
+        trans = transform(trans, ID_BB_UNIQUE = as.numeric(ID_BB_UNIQUE))
+        
+        return (trans)
+    }
+
+    # this function turns scores into opinions
+    scores2opinions <- function() {
+        
+        ########## scores to opinions ##########
+        transRF = trans[, c("ID_BB_UNIQUE","REPORTING_FREQUENCY")]
+        transRF = subset(transRF, is.na(transRF$REPORTING_FREQUENCY)==FALSE)
+        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="")
+        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="A")
+        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="0")
+        # remove duplicated date + ticker
+        transRF = transRF %>% distinct(ID_BB_UNIQUE,REPORTING_FREQUENCY, .keep_all = TRUE)
+        
+        scores = read.csv(paste(RootFolder, CompanyScoreFolder, "BondsScoresBackT.csv", sep = ""))
+        scores = subset(scores, trimws(scores$BBERG_ID)!="")
+        scores = subset(scores, nchar(as.character(scores$COMPANY_QUARTER))==6)
+        scores = subset(scores, scores$TABLES!="RS")
+        names(scores)[names(scores) == "MOMENTUM_11"] = "M.FORMULA_11"
+        scores = scores[ ,c("BBERG_ID","TABLES","COMPANY_QUARTER","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","DT_ENTRY","DATE")]
+        scores$BBERG_ID = gsub("EQ", "", scores$BBERG_ID)
+        scores = transform(scores, BBERG_ID = as.numeric(BBERG_ID))
+        
+        scores$DATE = as.Date(scores$DATE, "%b %d %Y")
+        scores$DT_ENTRY = as.Date(scores$DT_ENTRY, "%b %d %Y")
+        scores$COMPANY_QUARTER = substr(scores$COMPANY_QUARTER,1,2)
+        scores$AdjDate = ifelse(scores$COMPANY_QUARTER=="4Q",scores$DATE+CS.AdjEntryDate.4Q,
+                                ifelse(scores$COMPANY_QUARTER=="1S",scores$DATE+CS.AdjEntryDate.1S,
+                                       ifelse(scores$COMPANY_QUARTER=="2S",scores$DATE+CS.AdjEntryDate.2S,
+                                              scores$DATE+CS.AdjEntryDate.123Q)))
+        scores$AdjDate = ifelse(scores$DT_ENTRY>scores$AdjDate,scores$AdjDate,scores$DT_ENTRY)
+        scores$AdjDate =as.Date(scores$AdjDate, origin="1970-01-01")
+        
+        scores = merge(scores, transRF, by.x="BBERG_ID", by.y="ID_BB_UNIQUE")
+        if (CS.TableOption==1) {
+            scores$FilterByTable = ifelse(scores$TABLES=="OR" & grepl("M", scores$REPORTING_FREQUENCY),1,
+                                          ifelse(scores$TABLES=="MR" & !grepl("M", scores$REPORTING_FREQUENCY),1,0))
+        } else if  (CS.TableOption==2) {
+            scores$FilterByTable = ifelse(scores$TABLES=="OR",1,0)
+        } else if  (CS.TableOption==3) {
+            scores$FilterByTable = ifelse(scores$TABLES=="MR",1,0)    
+        } else {
+            scores$FilterByTable = 1
+        }
+        scores = subset(scores, scores$FilterByTable==1)
+        scores$RF = ifelse(grepl("Q", scores$REPORTING_FREQUENCY), "Q", "SA")
+        scores = scores[, !(colnames(scores) %in% c("DT_ENTRY","DATE","FilterByTable","COMPANY_QUARTER","REPORTING_FREQUENCY"))]
+        scores = scores[order(scores$BBERG_ID, scores$AdjDate),]
+        scores$index = seq.int(nrow(scores))-1
+        scores$index1 = scores$index + 1
+        scores$index2 = scores$index + 2
+        scores$index = paste(scores$BBERG_ID, "#", scores$index)
+        scores$index1 = paste(scores$BBERG_ID, "#", scores$index1)
+        scores$index2 = paste(scores$BBERG_ID, "#", scores$index2)
+        scores = merge(scores, scores[ , c("index1","M.SCORE", "M.NA")],
+                       by.x="index", by.y="index1", all.x=TRUE)
+        names(scores)[names(scores) == "M.SCORE.x"] = "M.SCORE"
+        names(scores)[names(scores) == "M.NA.x"] = "M.NA"
+        names(scores)[names(scores) == "M.SCORE.y"] = "T1.M.SCORE"
+        names(scores)[names(scores) == "M.NA.y"] = "T1.M.NA"
+        scores = merge(scores, scores[ , c("index2","M.SCORE", "M.NA")],
+                       by.x="index", by.y="index2", all.x=TRUE)
+        names(scores)[names(scores) == "M.SCORE.x"] = "M.SCORE"
+        names(scores)[names(scores) == "M.NA.x"] = "M.NA"
+        names(scores)[names(scores) == "M.SCORE.y"] = "T2.M.SCORE"
+        names(scores)[names(scores) == "M.NA.y"] = "T2.M.NA"
+        
+        scores$T1.M.SCORE[is.na(scores$T1.M.SCORE)] = -1
+        scores$T2.M.SCORE[is.na(scores$T2.M.SCORE)] = -1
+        scores$T1.M.NA[is.na(scores$T1.M.NA)] = 99
+        scores$T2.M.NA[is.na(scores$T2.M.NA)] = 99
+
+        # next group data by BBERG_ID and loop thru each BBERG_ID to determine M.OP
+        companies = scores %>% split(f=scores$BBERG_ID)
+        companies = lapply(companies, scoreToOp)
+        opinions = do.call(rbind,companies)
+
+        opinions = opinions[, !(colnames(opinions) %in% c("RF","index","index1","index2","T1.M.SCORE","T2.M.SCORE","T1.M.NA","T2.M.NA","M.OP1","M.OP2"))]
+        return(opinions)
+    }    
+
+
     # this function returns index file after joining scores
     indexop <- function(index, ds) {
         
@@ -488,129 +613,17 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         
     }
     
-    ########## load translation file ##########
-    trans = read.xlsx(xlsxFile=paste(RootFolder, "Translation template.xlsx", sep = ""),
-                      sheet = "Bond translation",
-                      startRow = 14,
-                      detectDates = TRUE,
-                      na.strings = c(""),
-                      cols = c(1,5,17,18))
-    trans = subset(trans, is.na(trans$Bond.Ticker)==FALSE)
-    trans = subset(trans, trimws(trans$Bond.Ticker)!="")
-    # remove duplicated date + ticker
-    trans = trans %>% distinct(FROM.DATE.LINK,Bond.Ticker, .keep_all = TRUE)
-    trans = trans[order(trans$Bond.Ticker, trans$FROM.DATE.LINK),]
-    trans$index = seq.int(nrow(trans))-1
-    trans$index1 = trans$index + 1
-    trans$index = paste(trans$Bond.Ticker, trans$index)
-    trans$index1 = paste(trans$Bond.Ticker, trans$index1)
-    trans = merge(trans, trans[ , c("index","FROM.DATE.LINK")],
-                by.x="index1", by.y="index", all.x=TRUE)
-    names(trans)[names(trans) == "FROM.DATE.LINK.x"] = "FROM.DATE.LINK"
-    names(trans)[names(trans) == "FROM.DATE.LINK.y"] = "TO.DATE.LINK"
-    trans$TO.DATE.LINK = ifelse(is.na(trans$TO.DATE.LINK), "2020-01-01", trans$TO.DATE.LINK)
-    # convert TO.DATE.LINK back to date type
-    trans$TO.DATE.LINK =as.Date(trans$TO.DATE.LINK, "%Y-%m-%d")
-    # convert FROM.DATE.LINK back to date type
-    trans$FROM.DATE.LINK =as.Date(trans$FROM.DATE.LINK, "%Y-%m-%d")
-    trans$ID_BB_UNIQUE = gsub("EQ", "", trans$ID_BB_UNIQUE)
-    trans = transform(trans, ID_BB_UNIQUE = as.numeric(ID_BB_UNIQUE))
 
-    ########## load company scores file ##########
+    ########## load translation and company scores files ##########
+    trans = loadtrans()
+    
     if (CS.UseFile) {
         scores = read.csv(paste(RootFolder, "CompanyScoresBondCalc.csv", sep = ""))
         scores = scores[ , c("BBERG_ID","TABLES","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","AdjDate","M.OP")]
         scores$AdjDate = as.Date(scores$AdjDate, "%Y-%m-%d")
     } else {
-        transRF = trans[, c("ID_BB_UNIQUE","REPORTING_FREQUENCY")]
-        transRF = subset(transRF, is.na(transRF$REPORTING_FREQUENCY)==FALSE)
-        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="")
-        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="A")
-        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="0")
-        # remove duplicated date + ticker
-        transRF = transRF %>% distinct(ID_BB_UNIQUE,REPORTING_FREQUENCY, .keep_all = TRUE)
-
-        scores = read.csv(paste(RootFolder, CompanyScoreFolder, "BondsScoresBackT.csv", sep = ""))
-        scores = subset(scores, trimws(scores$BBERG_ID)!="")
-        scores = subset(scores, nchar(as.character(scores$COMPANY_QUARTER))==6)
-        scores = subset(scores, scores$TABLES!="RS")
-        names(scores)[names(scores) == "MOMENTUM_11"] = "M.FORMULA_11"
-        scores = scores[ ,c("BBERG_ID","TABLES","COMPANY_QUARTER","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","DT_ENTRY","DATE")]
-        scores$BBERG_ID = gsub("EQ", "", scores$BBERG_ID)
-        scores = transform(scores, BBERG_ID = as.numeric(BBERG_ID))
-        
-        scores$DATE = as.Date(scores$DATE, "%b %d %Y")
-        scores$DT_ENTRY = as.Date(scores$DT_ENTRY, "%b %d %Y")
-        scores$COMPANY_QUARTER = substr(scores$COMPANY_QUARTER,1,2)
-        scores$AdjDate = ifelse(scores$COMPANY_QUARTER=="4Q",scores$DATE+CS.AdjEntryDate.4Q,
-                            ifelse(scores$COMPANY_QUARTER=="1S",scores$DATE+CS.AdjEntryDate.1S,
-                            ifelse(scores$COMPANY_QUARTER=="2S",scores$DATE+CS.AdjEntryDate.2S,
-                                   scores$DATE+CS.AdjEntryDate.123Q)))
-        scores$AdjDate = ifelse(scores$DT_ENTRY>scores$AdjDate,scores$AdjDate,scores$DT_ENTRY)
-        scores$AdjDate =as.Date(scores$AdjDate, origin="1970-01-01")
-        
-        scores = merge(scores, transRF, by.x="BBERG_ID", by.y="ID_BB_UNIQUE")
-        if (CS.TableOption==1) {
-            scores$FilterByTable = ifelse(scores$TABLES=="OR" & grepl("M", scores$REPORTING_FREQUENCY),1,
-                                          ifelse(scores$TABLES=="MR" & !grepl("M", scores$REPORTING_FREQUENCY),1,0))
-        } else if  (CS.TableOption==2) {
-            scores$FilterByTable = ifelse(scores$TABLES=="OR",1,0)
-        } else if  (CS.TableOption==3) {
-            scores$FilterByTable = ifelse(scores$TABLES=="MR",1,0)    
-        } else {
-            scores$FilterByTable = 1
-        }
-        scores = subset(scores, scores$FilterByTable==1)
-        scores$RF = ifelse(grepl("Q", scores$REPORTING_FREQUENCY), "Q", "SA")
-        scores = scores[, !(colnames(scores) %in% c("DT_ENTRY","DATE","FilterByTable","COMPANY_QUARTER","REPORTING_FREQUENCY"))]
-        scores = scores[order(scores$BBERG_ID, scores$AdjDate),]
-        scores$index = seq.int(nrow(scores))-1
-        scores$index1 = scores$index + 1
-        scores$index2 = scores$index + 2
-        scores$index = paste(scores$BBERG_ID, "#", scores$index)
-        scores$index1 = paste(scores$BBERG_ID, "#", scores$index1)
-        scores$index2 = paste(scores$BBERG_ID, "#", scores$index2)
-        scores = merge(scores, scores[ , c("index1","M.SCORE", "M.NA")],
-                      by.x="index", by.y="index1", all.x=TRUE)
-        names(scores)[names(scores) == "M.SCORE.x"] = "M.SCORE"
-        names(scores)[names(scores) == "M.NA.x"] = "M.NA"
-        names(scores)[names(scores) == "M.SCORE.y"] = "T1.M.SCORE"
-        names(scores)[names(scores) == "M.NA.y"] = "T1.M.NA"
-        scores = merge(scores, scores[ , c("index2","M.SCORE", "M.NA")],
-                      by.x="index", by.y="index2", all.x=TRUE)
-        names(scores)[names(scores) == "M.SCORE.x"] = "M.SCORE"
-        names(scores)[names(scores) == "M.NA.x"] = "M.NA"
-        names(scores)[names(scores) == "M.SCORE.y"] = "T2.M.SCORE"
-        names(scores)[names(scores) == "M.NA.y"] = "T2.M.NA"
-        
-        scores$T1.M.SCORE[is.na(scores$T1.M.SCORE)] = -1
-        scores$T2.M.SCORE[is.na(scores$T2.M.SCORE)] = -1
-        scores$T1.M.NA[is.na(scores$T1.M.NA)] = 99
-        scores$T2.M.NA[is.na(scores$T2.M.NA)] = 99
-        
-        # next group data by BBERG_ID and loop thru each BBERG_ID to determine M.OP
-        # create an empty opinions dataframe with same structure of scores
-        opinions=scores[0,]
-        companies = unique(scores$BBERG_ID)
-        for (i in 1:length(companies)) {
-            temp = scores[scores$BBERG_ID==companies[i],]
-            temp = temp[order(temp$AdjDate),]
-            temp$M.OP1 = scoreToOp1(temp$RF, temp$M.NA, temp$T1.M.NA, temp$T2.M.NA, temp$M.SCORE, temp$T1.M.SCORE, temp$T2.M.SCORE)
-            temp$M.OP2 = scoreToOp2(temp$RF, temp$M.NA, temp$T1.M.NA, temp$T2.M.NA, temp$M.SCORE, temp$T1.M.SCORE, temp$T2.M.SCORE)
-            temp = FillDown(temp, 'M.OP2')
-            temp$M.OP2[is.na(temp$M.OP2)] = -2
-            temp$M.OP = ifelse(temp$M.OP1==-3|temp$M.OP1==-1|temp$M.OP1==0|temp$M.OP1==1, temp$M.OP1, temp$M.OP2)    
-            opinions=rbind(opinions, temp)
-        }
-        
-        opinions = opinions[, !(colnames(opinions) %in% c("RF","index","index1","index2","T1.M.SCORE","T2.M.SCORE","T1.M.NA","T2.M.NA","M.OP1","M.OP2"))]
-        scores=opinions
-        #write.csv(scores, file = paste(RootFolder, "CompanyScoresBondCalc.csv", sep = ""))
+        scores = scores2opinions()
         write.table(scores, file = paste(RootFolder, "CompanyScoresBondCalc.csv", sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
-        
-        # destroy opinions
-        rm(opinions)
-        gc()
     }
     
     ########## load index file ##########
