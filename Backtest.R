@@ -1,6 +1,7 @@
 source('BacktestMain.R', local = TRUE)
 
 library(shiny)
+library(rhandsontable)
 
 ui <- tagList(
     tags$head(
@@ -140,7 +141,7 @@ ui <- tagList(
                    tags$hr()
                ),
                fluidRow(
-                   tableOutput('show_inputs')
+                   rHandsontableOutput("indices")
                )
                
       ),
@@ -230,11 +231,37 @@ server <- function(input, output, session) {
     
     output$status <- renderText({rv$status})
     output$CH_status <- renderText({rv$CH_status})
+
+    #************* indices editor ***********#
+    values = reactiveValues()
     
+    data = reactive({
+        if (!is.null(input$indices)) {
+            DF = hot_to_r(input$indices)
+        } else {
+            if (is.null(values[["DF"]]))
+                DF = TH.Limits
+            else
+                DF = values[["DF"]]
+        }
+
+        values[["DF"]] = DF
+        DF
+    })
+    
+    output$indices <- renderRHandsontable({
+        DF = data()
+        if (!is.null(DF))
+            rhandsontable(DF, stretchH = "all") %>%
+            hot_context_menu(allowRowEdit = FALSE, allowColEdit = FALSE)
+    })
+    
+
     observeEvent(input$save, {
         df = AllInputs()
         params$value = df[match(params$name, df$name),2]
         write.table(params, file = "parameters.csv", sep = ",", col.names = TRUE, row.names = FALSE)
+        write.table(data(), file = "indices.csv", sep = ",", col.names = TRUE, row.names = FALSE)
         session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = "saved!"))
     })
     
@@ -244,6 +271,7 @@ server <- function(input, output, session) {
     
     AllInputs <- reactive({
         x <- reactiveValuesToList(input)
+        x <- x[names(x)!="indices"]
         data.frame(
             name = names(x),
             value = unlist(x, use.names = FALSE)
