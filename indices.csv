@@ -1,6 +1,6 @@
 "Indices","BuyDurationLow","BuyDurationHigh","HoldDurationLow","HoldDurationHigh","BuyASWLow","BuyASWHigh","HoldASWLow","HoldASWHigh","Include"
 "HPID",1,1.05,1,1.05,1,1.05,1,1.05,1
-"EMNS",0.95,1,1,1.05,0.95,1,0.9,0.95,1
+"EMNS",0.95,1,1,1.05,0.95,1,0.9,0.95,0
 "EJ00",0.95,1,1,1.05,0.95,1,0.9,0.95,0
 "HCNF",0.9,1.1,0.95,1.05,0.9,1.1,0.95,1.05,0
 "CI00",0.95,1,1,1.05,0.95,1,0.9,0.95,0

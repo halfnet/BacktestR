@@ -15,7 +15,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
     if (DEBUG) {
         RootFolder = "C:/MyProjects/Guru/BacktestR/"
         CS.UseFile = TRUE
-        TH.UseFile = TRUE
+        TH.UseFile = FALSE
         ConstructModelPort = TRUE
         ConstructModelPortMethod = 1
         CH = TRUE
@@ -115,14 +115,14 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
     }
     
     # this function convert score to opinion by company
-    scoreToOp <- function(temp) {
-        temp = temp[order(temp$AdjDate),]
-        temp$M.OP1 = scoreToOp1(temp$RF, temp$M.NA, temp$T1.M.NA, temp$T2.M.NA, temp$M.SCORE, temp$T1.M.SCORE, temp$T2.M.SCORE)
-        temp$M.OP2 = scoreToOp2(temp$RF, temp$M.NA, temp$T1.M.NA, temp$T2.M.NA, temp$M.SCORE, temp$T1.M.SCORE, temp$T2.M.SCORE)
-        temp = FillDown(temp, 'M.OP2')
-        temp$M.OP2[is.na(temp$M.OP2)] = -2
-        temp$M.OP = ifelse(temp$M.OP1==-3|temp$M.OP1==-1|temp$M.OP1==0|temp$M.OP1==1, temp$M.OP1, temp$M.OP2)    
-        return (temp)
+    scoreToOp <- function(df) {
+        df = df[order(df$AdjDate),]
+        df$M.OP1 = scoreToOp1(df$RF, df$M.NA, df$T1.M.NA, df$T2.M.NA, df$M.SCORE, df$T1.M.SCORE, df$T2.M.SCORE)
+        df$M.OP2 = scoreToOp2(df$RF, df$M.NA, df$T1.M.NA, df$T2.M.NA, df$M.SCORE, df$T1.M.SCORE, df$T2.M.SCORE)
+        df = FillDown(df, 'M.OP2')
+        df$M.OP2[is.na(df$M.OP2)] = -2
+        df$M.OP = ifelse(df$M.OP1==-3|df$M.OP1==-1|df$M.OP1==0|df$M.OP1==1, df$M.OP1, df$M.OP2)    
+        return (df)
     }
     
     # this function returns index monthly file
@@ -191,9 +191,15 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
             colnames(df)[6] = "Bond.Name"
             # remove unused columns
             df = df[, !(colnames(df) %in% c("Description", "X"))]    
+            # add one more month from regular index monthly file
+            df2 = indexmonthlydata(index)
+            # get rid of the monthly file that is later than the project file
+            df2 = subset(df2, df2$As.of.Date<max(df$As.of.Date))
+            df = rbind(df, subset(df2, df2$As.of.Date==max(df2$As.of.Date)))
         } else {
+            # return two most recent months
             df = indexmonthlydata(index)
-            df = subset(df, df$As.of.Date==max(df$As.of.Date))
+            df = subset(df, df$As.of.Date==max(df$As.of.Date) | df$As.of.Date==as.mondate(max(df$As.of.Date))-1)
         }
         
         df=subset(df, df$Ticker!="CASH")
@@ -339,9 +345,15 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         ds2 = subset(ds2, ds2$As.of.Date>=ds2$FROM.DATE.LINK 
                      & ds2$As.of.Date<ds2$TO.DATE.LINK)
         ds2 = ds2[, !(colnames(ds2) %in% c("FROM.DATE.LINK","TO.DATE.LINK"))]
-        ds2$FROM.DATE.LINK = ifelse(grepl("Q", ds2$REPORTING_FREQUENCY), 
+        if (CH) {
+            ds2$FROM.DATE.LINK = ifelse(grepl("Q", ds2$REPORTING_FREQUENCY), 
+                                        max(ds2$As.of.Date)+CS.MaxRange.Q,
+                                        max(ds2$As.of.Date)+CS.MaxRange.SA)
+        } else {
+            ds2$FROM.DATE.LINK = ifelse(grepl("Q", ds2$REPORTING_FREQUENCY), 
                                     ds2$As.of.Date+CS.MaxRange.Q,
                                     ds2$As.of.Date+CS.MaxRange.SA)
+        }
         # convert FROM.DATE.LINK back to date type
         ds2$FROM.DATE.LINK =as.Date(ds2$FROM.DATE.LINK, origin="1970-01-01")
         if (CH) {
@@ -373,6 +385,17 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         
         # clean up M.OP and determine C.OP
         ds$M.OP = ifelse(is.na(ds$M.OP),-4,ds$M.OP)
+        # special handling for CurrentHoldings
+        # if the last opinion is -3, and 2nd to last opinion is 1, 0 or -2, use it
+        if (CH) {
+            ds1 = subset(ds, ds$As.of.Date == max(ds$As.of.Date))
+            ds2 = subset(ds[,c("Cusip", "M.OP")], ds$As.of.Date == min(ds$As.of.Date))
+            ds = merge(ds1, ds2, by.x="Cusip", by.y="Cusip", all.x=TRUE)
+            ds$M.OP.x = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                               ds$M.OP.y, ds$M.OP.x)
+            ds = ds[, !(colnames(ds) %in% c("M.OP.y"))]
+            names(ds)[names(ds) == "M.OP.x"] = "M.OP"
+        }
         ds$C.OP = ifelse(ds$M.OP==-4 | ds$M.OP==-3 | ds$M.OP==-1,ds$M.OP,
                          ifelse((ds$M.OP==-2 | ds$M.OP==-0) & ds$M.FORMULA_11>=HoldM.RatioCutOff,ds$M.OP,
                                 ifelse(ds$M.OP==1 & ds$M.FORMULA_11>=BuyM.RatioCutOff,ds$M.OP,-1)))
@@ -381,9 +404,9 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
     }
     
     # this function returns threshold file
-    indexopt <- function(dataset) {
-        dataset = dataset[order(dataset$Index,dataset$Date),]
-        indexmonths = split(dataset, paste(dataset$Index, dataset$Date))
+    indexopt <- function(df) {
+        df = df[order(df$Index,df$Date),]
+        indexmonths = split(df, paste(df$Index, df$Date))
         
         MinWght = TH.MinWght
         
@@ -569,18 +592,18 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
     
 
     # this calc FinalMktWeight for DtS
-    dts <- function(dataset) {
+    dts <- function(df) {
         
-        dataset = dataset[order(-dataset$Qualify, -dataset$DtS),]
+        df = df[order(-df$Qualify, -df$DtS),]
         
         Multiple = OutPerformMultiple-1
         PercentileHold = ConstructModelPortDtSPHold
         PercentileBuy = ConstructModelPortDtSPBuy
-        dataset$DtSPHold = quantile(dataset$DtS, PercentileHold)
-        dataset$DtSPBuy = quantile(dataset$DtS, PercentileBuy)
-        dataset$DtSPHoldDiff = abs(dataset$DtS - dataset$DtSPHold)
-        dataset$DtSPBuyDiff = abs(dataset$DtS - dataset$DtSPBuy)
-        row = dataset[1,]
+        df$DtSPHold = quantile(df$DtS, PercentileHold)
+        df$DtSPBuy = quantile(df$DtS, PercentileBuy)
+        df$DtSPHoldDiff = abs(df$DtS - df$DtSPHold)
+        df$DtSPBuyDiff = abs(df$DtS - df$DtSPBuy)
+        row = df[1,]
         Opinion = row$M.OP
         NumOfBonds = row$NumOfBonds
         NumQualify = row$NumQualify
@@ -589,27 +612,27 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         if (Opinion ==1)
         {
             # find the one that's qualified and closest to PHold and use it
-            dataset = dataset[order(-dataset$Qualify, dataset$DtSPHoldDiff),]
-            row = dataset[1,]
+            df = df[order(-df$Qualify, df$DtSPHoldDiff),]
+            row = df[1,]
             EfficientDtS = row$EfficientDtS
             row$FinalMktWeight = ifelse(EfficientDtS==0,0,TotalTicker/EfficientDtS)
             
             # find the one that's qualified and closest to PBuy and use it
-            dataset = dataset[order(-dataset$Qualify, dataset$DtSPBuyDiff),]
-            row = dataset[1,]
+            df = df[order(-df$Qualify, df$DtSPBuyDiff),]
+            row = df[1,]
             EfficientDtS = row$EfficientDtS
             row$FinalMktWeight = ifelse(EfficientDtS==0,0,row$FinalMktWeight + Multiple*TotalTicker/EfficientDtS)
         } else
         {
             # find the one that's qualified and closest to PHold and use it
-            dataset = dataset[order(-dataset$Qualify, dataset$DtSPHoldDiff),]
-            row = dataset[1,]
+            df = df[order(-df$Qualify, df$DtSPHoldDiff),]
+            row = df[1,]
             EfficientDtS = row$EfficientDtS
             row$FinalMktWeight = ifelse(EfficientDtS==0,0,TotalTicker/EfficientDtS)
         }
         
         
-        return(dataset)
+        return(df)
         
     }
     
