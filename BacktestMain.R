@@ -28,7 +28,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
     library(DataCombine)
     library(data.table)
     library(openxlsx)
-    
+
     ########## initialize variables ##########
     final = data.frame(matrix(ncol=0,nrow=0))
     params = read.csv("parameters.csv")
@@ -151,7 +151,11 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         df <- do.call("rbind", df)
         df$As.of.Date=as.Date(as.character(df$As.of.Date), "%Y%m%d")
         # converting from excel date to R
+        # surpress warning
+        options(warn = -1)
         df$Maturity.Date=as.Date(as.numeric(df$Maturity.Date), origin="1899-12-30")
+        options(warn = 0)
+        
         colnames(df)[6] = "Bond.Name"
         # remove unused columns
         df = df[, !(colnames(df) %in% c("Description"))]
@@ -356,11 +360,11 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         }
         # convert FROM.DATE.LINK back to date type
         ds2$FROM.DATE.LINK =as.Date(ds2$FROM.DATE.LINK, origin="1970-01-01")
+        ds2$TO.DATE.LINK = monthStart(ds2$As.of.Date)
         if (CH) {
-            ds2$TO.DATE.LINK = CH_OpinionDate
-        } else {
-            ds2$TO.DATE.LINK = monthStart(ds2$As.of.Date)
+            ds2$TO.DATE.LINK[ds2$As.of.Date==max(ds2$As.of.Date)] = CH_OpinionDate
         }
+            
         # get rid of columns no longer needed
         ds2 = ds2[, !(colnames(ds2) %in% c("Ticker","As.of.Date"))]
         
@@ -375,7 +379,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         ds2 = ds2[order(ds2$PK, ds2$AdjDate),]
         ds2 = ds2 %>% dplyr::mutate(rn = row_number()) %>% group_by(PK) %>% top_n(1, rn)
         # reformat Company ID back to its original format
-        ds2$ID_BB_UNIQUE = str_pad(ds2$ID_BB_UNIQUE, 16, pad = "0")
+        ds2$ID_BB_UNIQUE = paste("EQ", str_pad(ds2$ID_BB_UNIQUE, 16, pad = "0"), sep = "")
         
         # final join
         ds = merge(ds, ds2, by.x="PK", by.y="PK", all.x=TRUE)
@@ -389,12 +393,27 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         # if the last opinion is -3, and 2nd to last opinion is 1, 0 or -2, use it
         if (CH) {
             ds1 = subset(ds, ds$As.of.Date == max(ds$As.of.Date))
-            ds2 = subset(ds[,c("Cusip", "M.OP")], ds$As.of.Date == min(ds$As.of.Date))
+            ds2 = subset(ds[,c("Cusip","M.OP","M.SCORE","M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11")], ds$As.of.Date == min(ds$As.of.Date))
             ds = merge(ds1, ds2, by.x="Cusip", by.y="Cusip", all.x=TRUE)
-            ds$M.OP.x = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+            ds$M.OP = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
                                ds$M.OP.y, ds$M.OP.x)
-            ds = ds[, !(colnames(ds) %in% c("M.OP.y"))]
-            names(ds)[names(ds) == "M.OP.x"] = "M.OP"
+            ds$M.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                               ds$M.SCORE.y, ds$M.SCORE.x)
+            ds$M.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                                  ds$M.NA.y, ds$M.NA.x)
+            ds$T.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                                  ds$T.SCORE.y, ds$T.SCORE.x)
+            ds$T.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                                  ds$T.NA.y, ds$T.NA.x)
+            ds$L.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                                  ds$L.SCORE.y, ds$L.SCORE.x)
+            ds$L.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                                  ds$L.NA.y, ds$L.NA.x)
+            ds$M.FORMULA_11 = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                                  ds$M.FORMULA_11.y, ds$M.FORMULA_11.x)
+            
+            ds = ds[, !(colnames(ds) %in% c("M.OP.x","M.SCORE.x","M.NA.x","T.SCORE.x","T.NA.x","L.SCORE.x","L.NA.x","M.FORMULA_11.x",
+                                            "M.OP.y","M.SCORE.y","M.NA.y","T.SCORE.y","T.NA.y","L.SCORE.y","L.NA.y","M.FORMULA_11.y"))]
         }
         ds$C.OP = ifelse(ds$M.OP==-4 | ds$M.OP==-3 | ds$M.OP==-1,ds$M.OP,
                          ifelse((ds$M.OP==-2 | ds$M.OP==-0) & ds$M.FORMULA_11>=HoldM.RatioCutOff,ds$M.OP,
@@ -838,14 +857,14 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         ########## limit max weight per name ##########
         
         ds$TotalMonthMktWgt = ave(ds$FinalMktWeight, ds$IndexDate, FUN=sum)
-        ds$ReWeighted = ds$FinalMktWeight*100/ds$TotalMonthMktWgt
+        ds$ReWeighted = ifelse(ds$TotalMonthMktWgt==0, 0, ds$FinalMktWeight*100/ds$TotalMonthMktWgt)
         ds$TickerWeight = ave(ds$ReWeighted, ds$IndexTickerDate, FUN=sum)
         if (ConstructModelPort) {
             ds$TickerWeight = ifelse(ds$TickerWeight>MaxWeightPerName,MaxWeightPerName/ds$TickerWeight,1)
         
             ds$ReWeighted = ds$ReWeighted*ds$TickerWeight
             ds$TotalMonthMktWgt2 = ave(ds$ReWeighted, ds$IndexDate, FUN=sum)
-            ds$ReWeighted2 = ds$ReWeighted*100/ds$TotalMonthMktWgt2
+            ds$ReWeighted2 = ifelse(ds$TotalMonthMktWgt2==0, 0, ds$ReWeighted*100/ds$TotalMonthMktWgt2)
             
             ds$TickerWeight = 0
             # create an empty output dataframe with same structure of ds
