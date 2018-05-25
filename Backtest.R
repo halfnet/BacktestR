@@ -219,14 +219,14 @@ server <- function(input, output, session) {
 
     observeEvent(input$go, {
         session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = "processing..."))
-        processData(input$RootFolder, input$CS.UseFile, input$TH.UseFile, input$ConstructModelPort, input$ConstructModelPortMethod, FALSE, NULL) 
-        session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = "done!"))
+        result = processData(input$RootFolder, input$CS.UseFile, input$TH.UseFile, input$ConstructModelPort, input$ConstructModelPortMethod, FALSE, NULL) 
+        session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = result))
     })
     
     observeEvent(input$CH_go, {
         session$sendCustomMessage(type = 'print', message = list(selector = 'CH_status', html = "processing..."))
-        processData(input$RootFolder, input$CH_CS.UseFile, input$CH_TH.UseFile, input$CH_ConstructModelPort, input$CH_ConstructModelPortMethod, TRUE, input$CH_OpinionDate) 
-        session$sendCustomMessage(type = 'print', message = list(selector = 'CH_status', html = "done!"))
+        result = processData(input$RootFolder, input$CH_CS.UseFile, input$CH_TH.UseFile, input$CH_ConstructModelPort, input$CH_ConstructModelPortMethod, TRUE, input$CH_OpinionDate) 
+        session$sendCustomMessage(type = 'print', message = list(selector = 'CH_status', html = result))
     })
     
     output$status <- renderText({rv$status})
