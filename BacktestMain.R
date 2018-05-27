@@ -1,5 +1,5 @@
 
-processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
+processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     
     RootFolder = RF
     CS.UseFile = CS
@@ -370,7 +370,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         ds2 = ds2[, !(colnames(ds2) %in% c("Ticker","As.of.Date"))]
         
         ###### longest running merge #######
-        # joining index file to company scores (unequal join)
+        # joining index file to company scores (unequal join using data table)
         scores$AdjDate2 = scores$AdjDate
         ds2=setDT(ds2)[setDT(scores), on=.(ID_BB_UNIQUE=BBERG_ID, FROM.DATE.LINK<=AdjDate2, TO.DATE.LINK>AdjDate2),nomatch=0,allow.cartesian=TRUE]
         # convert data.table back to data.frame    
@@ -390,8 +390,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         
         # clean up M.OP and determine C.OP
         ds$M.OP = ifelse(is.na(ds$M.OP),-4,ds$M.OP)
-        # special handling for CurrentHoldings
-        # if the last opinion is -3, and 2nd to last opinion is 1, 0 or -2, use it
+        # special handling for CurrentHoldings (limited financials)
+        # if the last opinion is -3, and 2nd to last opinion is 1, 0 or -2, copy the score data
         if (CH) {
             ds1 = subset(ds, ds$As.of.Date == max(ds$As.of.Date))
             ds2 = subset(ds[,c("Cusip","M.OP","M.SCORE","M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11")], ds$As.of.Date == min(ds$As.of.Date))
@@ -656,13 +656,23 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
         
     }
 
+    ############################################################################################################
+    ##########################   MAIN CODE STARTS HERE!!!   ####################################################
+    ############################################################################################################
     result = ""
+    status_msg = ""
+    status_obj = ifelse(CH,"CH_status","status")
+    start_time = Sys.time()
     
     tryCatch({
         
         ########## load translation and company scores files ##########
+        status_msg = "loading translation file..."
+        session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
         trans = loadtrans()
         
+        status_msg = "calculating company opinions..."
+        session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
         if (CS.UseFile) {
             scores = read.csv(paste(RootFolder, "CompanyScoresBondCalc.csv", sep = ""))
             scores = scores[ , c("BBERG_ID","TABLES","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","AdjDate","M.OP")]
@@ -678,6 +688,9 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
                 j = 1
             }
             
+            status_msg = paste("merging", Indices[j], "data with company opinions...")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+
             if (CH) {
                 ds = ch_data(Indices[j])
             } else {
@@ -686,7 +699,10 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
             ds$As.of.Date = as.Date(ds$As.of.Date, "%m/%d/%Y")
             ds = indexop(Indices[j], ds)
             
-            # Merge with threshold and determine F.OP
+            # calculate thresholds
+            status_msg = paste("calculating", Indices[j], "thresholds...")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+
             if (TH.UseFile) {
                 if (CH) {
                     th = read.csv(paste(RootFolder,"CH_THRESHOLDS.csv",sep = ""))
@@ -712,6 +728,11 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
                     }
                 }
             }
+
+            # Merge with threshold and determine F.OP
+            status_msg = paste("merging", Indices[j], "with thresholds...")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            
             ds = merge(ds, th[,c("Index", "Date", "BuyASWCutOff", "BuyASWMax", "BuyDurationCutOff", "BuyDurationMax", "HoldASWCutOff", "HoldASWMax", "HoldDurationCutOff", "HoldDurationMax")], 
                        by.x=c("Index.Name", "As.of.Date"), by.y=c("Index", "Date"), all.x=TRUE)
             ds$F.OP = ifelse(ds$M.OP==-4 | ds$M.OP==-3 | ds$M.OP==-1,ds$M.OP,
@@ -739,6 +760,9 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
             ds$FinalMktWeight = 0
             
             ########## MV%/DtS/DtS Cash ##########
+            status_msg = paste("calculating portfolio weight for", Indices[j], "...")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            
             ds$DtS = ds$PrevMend.Mod.Dur.To.Worst*ds$PrevMend.AssetSwp
             ds$WghtDtS = ds$PrevMend.Mkt...Index.Wght*ds$DtS
             ds$Qualify = ifelse(((ds$F.OP==1|ds$F.OP==0|ds$F.OP==-2) & ds$DtS>0),1,0)
@@ -853,12 +877,11 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
             } 
             
             # remove columns no longer required to reduce memory usage
-            #ds = ds[, !(colnames(ds) %in% c("DtS","WghtDtS", "Qualify", "QualifyDtS", "temp", 
-            #                                "NumOfBonds", "TotalTicker", "TotalWghtDtS", "NumQualify",
-            #                                "MaxDtS", "AvgWghtDtSTicker", "EfficientDtS", 
-            #                                "DtSPHold", "DtSPBuy", "DtSPHoldDiff", "DtSPBuyDiff"))]
             ds = ds[, !(colnames(ds) %in% c("QualifyDtS", "temp", "MaxDtS"))]
+            
             ########## limit max weight per name ##########
+            status_msg = paste("limiting portfolio weight for", Indices[j], "...")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
             
             ds$TotalMonthMktWgt = ave(ds$FinalMktWeight, ds$IndexDate, FUN=sum)
             ds$ReWeighted = ifelse(ds$TotalMonthMktWgt==0, 0, ds$FinalMktWeight*100/ds$TotalMonthMktWgt)
@@ -944,7 +967,10 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate) {
             result_file = "BondMaster.csv"
         }
         write.table(final, file = paste(RootFolder, result_file, sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
-        result = paste(result_file, " generated successfully. It contains: ", nrow(final), " records.")
+        end_time = Sys.time()
+        time_took = as.numeric(difftime(end_time, start_time, units=("mins")))
+        time_took = format(round(time_took, 1), nsmall = 1)
+        result = paste(result_file, "generated successfully. It contains:", nrow(final), "records and took", time_took, "mins.")
         
     }, warning = function(w) {
         result = paste("warning: ", w)
