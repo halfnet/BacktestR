@@ -136,7 +136,12 @@ ui <- tagList(
                                    
                                    numericInput(inputId = "TH.MinWght", 
                                                 label = "Minimum Portfolio Weight (%)",
-                                                value = 50)
+                                                value = 50),
+                                   
+                                   numericInput(inputId = "TH.MA", 
+                                                label = "Moving Average (Months)",
+                                                value = 6)
+                                   
                             )
                         ),
                         fluidRow(

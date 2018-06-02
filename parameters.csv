@@ -22,6 +22,7 @@
 "Ind_Lvl2","ALL"
 "Ind_Lvl3","ALL"
 "Ind_Lvl4","ALL"
-"TH.MinWght","50"
+"TH.MinWght","55"
 "ConstructModelPortDtSPHold","0.5"
 "ConstructModelPortDtSPBuy","0.9"
+"TH.MA","6"

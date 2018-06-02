@@ -9,7 +9,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     ConstructModelPortMethod = CMPM
     CH = CH
     CH_OpinionDate = CH_OpinionDate
-    
+
     DEBUG = FALSE
     
     if (DEBUG) {
@@ -18,8 +18,9 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         TH.UseFile = FALSE
         ConstructModelPort = TRUE
         ConstructModelPortMethod = 1
-        CH = TRUE
+        CH = FALSE
         CH_OpinionDate = as.Date("2018-05-01")
+        TH.MA = 6
     }
     
     library(dplyr)
@@ -28,6 +29,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     library(DataCombine)
     library(data.table)
     library(openxlsx)
+    library(TTR)
     
     ########## initialize variables ##########
     final = data.frame(matrix(ncol=0,nrow=0))
@@ -69,6 +71,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     Ind_Lvl4 = as.character(as.vector(params$value[params$name=="Ind_Lvl4"]))
     
     TH.MinWght = as.numeric(as.vector(params$value[params$name=="TH.MinWght"]))
+    TH.MA = as.numeric(as.vector(params$value[params$name=="TH.MA"]))
     
     ########## define functions ##########
     monthStart <- function(x) {
@@ -351,6 +354,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
                      & ds2$As.of.Date<ds2$TO.DATE.LINK)
         ds2 = ds2[, !(colnames(ds2) %in% c("FROM.DATE.LINK","TO.DATE.LINK"))]
         if (CH) {
+            # special handling for CH, looking back from the last "As.of.Date"
             ds2$FROM.DATE.LINK = ifelse(grepl("Q", ds2$REPORTING_FREQUENCY), 
                                         max(ds2$As.of.Date)+CS.MaxRange.Q,
                                         max(ds2$As.of.Date)+CS.MaxRange.SA)
@@ -363,6 +367,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         ds2$FROM.DATE.LINK =as.Date(ds2$FROM.DATE.LINK, origin="1970-01-01")
         ds2$TO.DATE.LINK = monthStart(ds2$As.of.Date)
         if (CH) {
+            # special handling for CH, the last "As.of.Date" to use user set opinion date
             ds2$TO.DATE.LINK[ds2$As.of.Date==max(ds2$As.of.Date)] = CH_OpinionDate
         }
         
@@ -370,7 +375,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         ds2 = ds2[, !(colnames(ds2) %in% c("Ticker","As.of.Date"))]
         
         ###### longest running merge #######
-        # joining index file to company scores (unequal join using data table)
+        # joining index file to company scores (unequal join using data.table object)
         scores$AdjDate2 = scores$AdjDate
         ds2=setDT(ds2)[setDT(scores), on=.(ID_BB_UNIQUE=BBERG_ID, FROM.DATE.LINK<=AdjDate2, TO.DATE.LINK>AdjDate2),nomatch=0,allow.cartesian=TRUE]
         # convert data.table back to data.frame    
@@ -400,17 +405,17 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
                              ds$M.OP.y, ds$M.OP.x)
             ds$M.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
                                 ds$M.SCORE.y, ds$M.SCORE.x)
-            ds$M.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+            ds$M.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
                              ds$M.NA.y, ds$M.NA.x)
-            ds$T.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+            ds$T.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
                                 ds$T.SCORE.y, ds$T.SCORE.x)
-            ds$T.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+            ds$T.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
                              ds$T.NA.y, ds$T.NA.x)
-            ds$L.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+            ds$L.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
                                 ds$L.SCORE.y, ds$L.SCORE.x)
-            ds$L.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+            ds$L.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
                              ds$L.NA.y, ds$L.NA.x)
-            ds$M.FORMULA_11 = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+            ds$M.FORMULA_11 = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
                                      ds$M.FORMULA_11.y, ds$M.FORMULA_11.x)
             
             ds = ds[, !(colnames(ds) %in% c("M.OP.x","M.SCORE.x","M.NA.x","T.SCORE.x","T.NA.x","L.SCORE.x","L.NA.x","M.FORMULA_11.x",
@@ -439,14 +444,13 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         
         
         thresholds <- data.frame(matrix(ncol = 21, nrow = 0))
-        v <- c("Index", "Date", 
+        colnames(thresholds) = c("Index", "Date", 
                "BuyDurationCutOff", "BuyDurationMax", "BuyASWCutOff", "BuyASWMax",
                "HoldDurationCutOff", "HoldDurationMax", "HoldASWCutOff", "HoldASWMax", 
                "obsindex", "obsbuy", "obshold",
                "IndexDuration", "IndexASW", "PortDuration", "PortASW",
                "BuyDuration", "BuyASW", "HoldDuration", "HoldASW")
-        colnames(thresholds) <- v
-        
+
         PrevHoldDurationCutOff = DurationCutOff
         PrevBuyDurationCutOff = DurationCutOff
         PrevHoldDurationMax = DurationMax
@@ -596,8 +600,27 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         names(ds)[names(ds) == "PrevMend.Mod.Dur.To.Worst"] = "Duration"
         names(ds)[names(ds) == "PrevMend.AssetSwp"] = "ASW"
         ds = ds[, c("Index", "Date", "IndexWght", "Duration", "ASW", "C.OP")]
-        ds$AvgDuration = ave(ds$IndexWght/100*ds$Duration, ds$Date, FUN=sum)
-        ds$AvgASW = ave(ds$IndexWght/100*ds$ASW, ds$Date, FUN=sum)
+        ### try use moving average here ###
+        if (TH.MA==1) {
+            ds$AvgDuration = ave(ds$IndexWght/100*ds$Duration, ds$Date, FUN=sum)
+            ds$AvgASW = ave(ds$IndexWght/100*ds$ASW, ds$Date, FUN=sum)
+        } else {
+            ds_ma = group_by(ds,Index,Date) %>% 
+                summarize(AvgASWTemp = sum(IndexWght/100*ASW), AvgDurationTemp = sum(IndexWght/100*Duration))
+            ds_ma$AvgASW=runMean(ds_ma$AvgASWTemp, TH.MA)
+            ds_ma$AvgDuration=runMean(ds_ma$AvgDurationTemp, TH.MA)
+            for (i in (TH.MA-1):2) {
+                ds_ma$AvgASW[is.na(ds_ma$AvgASW)]=runMean(subset(ds_ma, is.na(ds_ma$AvgASW))$AvgASWTemp, i)
+                ds_ma$AvgDuration[is.na(ds_ma$AvgDuration)]=runMean(subset(ds_ma, is.na(ds_ma$AvgDuration))$AvgDurationTemp, i)
+            }
+            ds_ma$AvgASW[is.na(ds_ma$AvgASW)]=subset(ds_ma, is.na(ds_ma$AvgASW))$AvgASWTemp
+            ds_ma$AvgDuration[is.na(ds_ma$AvgDuration)]=subset(ds_ma, is.na(ds_ma$AvgDuration))$AvgDurationTemp
+        }
+        
+        ds_ma = ds_ma[, c("Index", "Date", "AvgASW", "AvgDuration")]
+        ds = merge(ds, ds_ma, 
+                   by.x=c("Index", "Date"), by.y=c("Index", "Date"), all.x=TRUE)
+        
         ds$BuyDurationMin = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "BuyDurationLow"]
         ds$BuyDurationMax = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "BuyDurationHigh"]
         ds$HoldDurationMin = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "HoldDurationLow"]
@@ -656,6 +679,34 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         
     }
 
+    # this function limits weight by index month
+    limitWeight <- function(df) {
+        # 1) group by Ticker, calculate sum of ReWeighted2
+        # 2) if any ticker with sum of ReWeighted2 > MaxWeightPerName, set it to MaxLimit, 
+        #   distribute by CUSIP within that ticker, otherwise DONE
+        # 3) re-weight the whole population to 100
+        # 4) repeat from 1)
+        continue = TRUE
+        count = 0
+        while (continue) {
+            
+            df$TickerWeight = ave(df$ReWeighted2, df$Ticker, FUN=sum)
+            if (nrow(df[which(df$TickerWeight>MaxWeightPerName),])>0) {
+                df$ReWeighted2[df$TickerWeight>MaxWeightPerName] = 
+                    df$ReWeighted2[df$TickerWeight>MaxWeightPerName] / df$TickerWeight[df$TickerWeight>MaxWeightPerName] * MaxLimit
+                df$ReWeighted2 = df$ReWeighted2 * 100 / sum(df$ReWeighted2)
+            } else {
+                continue = FALSE
+            }
+            count = count + 1
+            if (count>10) continue = FALSE
+        }
+        
+        return (df)
+    }
+    
+    
+    
     ############################################################################################################
     ##########################   MAIN CODE STARTS HERE!!!   ####################################################
     ############################################################################################################
@@ -676,7 +727,11 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         if (CS.UseFile) {
             scores = read.csv(paste(RootFolder, "CompanyScoresBondCalc.csv", sep = ""))
             scores = scores[ , c("BBERG_ID","TABLES","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","AdjDate","M.OP")]
-            scores$AdjDate = as.Date(scores$AdjDate, "%Y-%m-%d")
+            if (grepl("-", scores$AdjDate[1]))
+                scores$AdjDate = as.Date(scores$AdjDate, "%Y-%m-%d")
+            else
+                scores$AdjDate = as.Date(scores$AdjDate, "%m/%d/%Y")
+            
         } else {
             scores = scores2opinions()
             write.table(scores, file = paste(RootFolder, "CompanyScoresBondCalc.csv", sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
@@ -709,7 +764,10 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
                 } else {
                     th = read.csv(paste(RootFolder,"THRESHOLDS.csv",sep = ""))
                 }
-                th$Date = as.Date(th$Date, "%Y-%m-%d")
+                if (grepl("-", th$Date[1]))
+                    th$Date = as.Date(th$Date, "%Y-%m-%d")
+                else
+                    th$Date = as.Date(th$Date, "%m/%d/%Y")
                 
             } else {
                 th = indexth(Indices[j], ds)
@@ -882,46 +940,22 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             ########## limit max weight per name ##########
             status_msg = paste("limiting portfolio weight for", Indices[j], "...")
             session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+
             
             ds$TotalMonthMktWgt = ave(ds$FinalMktWeight, ds$IndexDate, FUN=sum)
             ds$ReWeighted = ifelse(ds$TotalMonthMktWgt==0, 0, ds$FinalMktWeight*100/ds$TotalMonthMktWgt)
             ds$TickerWeight = ave(ds$ReWeighted, ds$IndexTickerDate, FUN=sum)
             if (ConstructModelPort) {
                 ds$TickerWeight = ifelse(ds$TickerWeight>MaxWeightPerName,MaxWeightPerName/ds$TickerWeight,1)
-                
                 ds$ReWeighted = ds$ReWeighted*ds$TickerWeight
                 ds$TotalMonthMktWgt2 = ave(ds$ReWeighted, ds$IndexDate, FUN=sum)
                 ds$ReWeighted2 = ifelse(ds$TotalMonthMktWgt2==0, 0, ds$ReWeighted*100/ds$TotalMonthMktWgt2)
-                
                 ds$TickerWeight = 0
-                # create an empty output dataframe with same structure of ds
-                output=ds[0,]
-                IndexDates = unique(ds$IndexDate)
-                for (i in 1:length(IndexDates)) {
-                    # 1) group by Ticker, calculate sum of ReWeighted2
-                    # 2) if any ticker with sum of ReWeighted2 > MaxWeightPerName, set it to MaxLimit, 
-                    #   distribute by CUSIP within that ticker, otherwise DONE
-                    # 3) re-weight the whole population to 100
-                    # 4) repeat from 1)
-                    temp = ds[ds$IndexDate==IndexDates[i],]
-                    continue = TRUE
-                    count = 0
-                    while (continue) {
-                        
-                        temp$TickerWeight = ave(temp$ReWeighted2, temp$Ticker, FUN=sum)
-                        if (nrow(temp[which(temp$TickerWeight>MaxWeightPerName),])>0) {
-                            temp$ReWeighted2[temp$TickerWeight>MaxWeightPerName] = 
-                                temp$ReWeighted2[temp$TickerWeight>MaxWeightPerName] / temp$TickerWeight[temp$TickerWeight>MaxWeightPerName] * MaxLimit
-                            temp$ReWeighted2 = temp$ReWeighted2 * 100 / sum(temp$ReWeighted2)
-                        } else {
-                            continue = FALSE
-                        }
-                        count = count + 1
-                        if (count>10) continue = FALSE
-                    }
-                    output=rbind(output, temp)
-                }
                 
+                df = ds %>% split(f=ds$IndexDate)
+                df = lapply(df, limitWeight)
+                output = do.call(rbind,df)
+
                 
             } else {
                 ds$TotalMonthMktWgt2 = ds$TotalMonthMktWgt
