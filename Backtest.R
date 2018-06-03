@@ -66,7 +66,7 @@ ui <- tagList(
                                                 value = 2),
                                    numericInput(inputId = "CS.TableOption", 
                                                 label = "Table Option",
-                                                value = 160)
+                                                value = 1)
                             ),
                             column(4, 
                                    helpText("Model Construction Parameters:"),
@@ -195,6 +195,70 @@ ui <- tagList(
                             
                         )
                ),
+               tabPanel(title = "Optimization",
+                        fluidRow(
+                            column(4, 
+                                   actionButton(inputId = "OPT_opinion", 
+                                                label = "Optimize Opinions")
+                            ),
+                            column(4, 
+                                   actionButton(inputId = "OPT_threshold", 
+                                                label = "Optimize Thresholds")
+                            ),
+                            column(4, 
+                                   textOutput("OPT_status")
+                            )
+                        ),
+                        fluidRow(
+                            tags$hr()
+                        ),
+                        fluidRow(
+                            column(4,
+                                   helpText("Company Score Parameters:"),
+                                   numericInput(inputId = "CS.Opinion.NA.Min", 
+                                                label = "CS.Opinion.NA.Min",
+                                                value = 2),
+                                   numericInput(inputId = "CS.Opinion.NA.Max", 
+                                                label = "CS.Opinion.NA.Max",
+                                                value = 3),
+                                   numericInput(inputId = "CS.Opinion.NA.Step", 
+                                                label = "CS.Opinion.NA.Step",
+                                                value = 1),
+                                   numericInput(inputId = "CS.TableOption.Min", 
+                                                label = "CS.TableOption.Min",
+                                                value = 1),
+                                   numericInput(inputId = "CS.TableOption.Max", 
+                                                label = "CS.TableOption.Max",
+                                                value = 4),
+                                   numericInput(inputId = "CS.TableOption.Step", 
+                                                label = "CS.TableOption.Step",
+                                                value = 1)
+                            ),
+                            column(4, 
+                                   helpText("Threshold Parameters:"),
+                                   numericInput(inputId = "TH.MA.Min", 
+                                                label = "TH.MA.Min",
+                                                value = 2),
+                                   numericInput(inputId = "TH.MA.Max", 
+                                                label = "TH.MA.Max",
+                                                value = 12),
+                                   numericInput(inputId = "TH.MA.Step", 
+                                                label = "TH.MA.Step",
+                                                value = 2),
+                                   numericInput(inputId = "TH.MinWght.Min", 
+                                                label = "TH.MinWght.Min",
+                                                value = 40),
+                                   numericInput(inputId = "TH.MinWght.Max", 
+                                                label = "TH.MinWght.Max",
+                                                value = 60),
+                                   numericInput(inputId = "TH.MinWght.Step", 
+                                                label = "TH.MinWght.Step",
+                                                value = 5)
+                            )
+                            
+                            
+                        )
+               ),
                navbarMenu(title = "Other",
                           tabPanel(title = "Sub Menu1",
                                    plotOutput("chisq"),
@@ -220,6 +284,7 @@ server <- function(input, output, session) {
     rv <- reactiveValues(
         status = "ready",
         CH_status = "ready",
+        ### delete 3 lines below ###
         norm = rnorm(500), 
         unif = runif(500),
         chisq = rchisq(500, 2))
@@ -242,6 +307,14 @@ server <- function(input, output, session) {
         enable("CH_go")
     })
     
+    observeEvent(input$save, {
+        df = AllInputs()
+        params$value = df[match(params$name, df$name),2]
+        write.table(params, file = "parameters.csv", sep = ",", col.names = TRUE, row.names = FALSE)
+        write.table(data(), file = "indices.csv", sep = ",", col.names = TRUE, row.names = FALSE)
+        session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = "saved!"))
+    })
+
     output$status <- renderText({rv$status})
     output$CH_status <- renderText({rv$CH_status})
     
@@ -269,18 +342,9 @@ server <- function(input, output, session) {
             hot_context_menu(allowRowEdit = FALSE, allowColEdit = FALSE)
     })
     
-    
-    observeEvent(input$save, {
-        df = AllInputs()
-        params$value = df[match(params$name, df$name),2]
-        write.table(params, file = "parameters.csv", sep = ",", col.names = TRUE, row.names = FALSE)
-        write.table(data(), file = "indices.csv", sep = ",", col.names = TRUE, row.names = FALSE)
-        session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = "saved!"))
-    })
-    
-    output$show_inputs <- renderTable({
-        TH.Limits
-    })    
+    #output$show_inputs <- renderTable({
+    #    TH.Limits
+    #})    
     
     AllInputs <- reactive({
         x <- reactiveValuesToList(input)
@@ -292,6 +356,7 @@ server <- function(input, output, session) {
     })
     
     
+    #************* to be deleted after this ***********#
     
     observeEvent(input$renorm, { rv$norm <- rnorm(500) })
     observeEvent(input$reunif, { rv$unif <- runif(500) })

@@ -199,27 +199,30 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             colnames(df)[6] = "Bond.Name"
             # remove unused columns
             df = df[, !(colnames(df) %in% c("Description", "X"))]    
-            # add one more month from regular index monthly file
-            df2 = indexmonthlydata(index)
+            df=subset(df, df$Ticker!="CASH")
+            df$PK=paste(df$Index.Name, df$Cusip, df$As.of.Date, sep="")
+            # remove duplicate PK
+            df = df %>% distinct(PK, .keep_all = TRUE)    
+            df$PrevMend.Mod.Dur.To.Worst[is.na(df$PrevMend.Mod.Dur.To.Worst)]=0
+            df$PrevMend.AssetSwp[is.na(df$PrevMend.AssetSwp)]=0
+            if (Ind_Lvl1!="ALL") df = subset(df, df$ML.Industry.Lvl.1==Ind_Lvl1)
+            if (Ind_Lvl2!="ALL") df = subset(df, df$ML.Industry.Lvl.2==Ind_Lvl2)
+            if (Ind_Lvl3!="ALL") df = subset(df, df$ML.Industry.Lvl.3==Ind_Lvl3)
+            if (Ind_Lvl4!="ALL") df = subset(df, df$ML.Industry.Lvl.4==Ind_Lvl4)
+            
+            # add X more month from regular index file
+            df2 = indexdata(index)
             # get rid of the monthly file that is later than the project file
             df2 = subset(df2, df2$As.of.Date<max(df$As.of.Date))
-            df = rbind(df, subset(df2, df2$As.of.Date==max(df2$As.of.Date)))
+            #print(nrow(df2))
+            df2 = subset(df2, df2$As.of.Date<=max(df2$As.of.Date) & df2$As.of.Date>=as.Date(as.mondate(max(df2$As.of.Date))-TH.MA+1))
+            df = rbind(df, df2)
         } else {
-            # if projected file doesn't exist, return two most recent months
-            df = indexmonthlydata(index)
-            df = subset(df, df$As.of.Date==max(df$As.of.Date) | df$As.of.Date==as.mondate(max(df$As.of.Date))-1)
+            # if projected file doesn't exist, return X most recent months
+            df = indexdata(index)
+            #print(nrow(df))
+            df = subset(df, df$As.of.Date<=max(df$As.of.Date) & df$As.of.Date>=as.Date(as.mondate(max(df$As.of.Date))-TH.MA))
         }
-        
-        df=subset(df, df$Ticker!="CASH")
-        df$PK=paste(df$Index.Name, df$Cusip, df$As.of.Date, sep="")
-        # remove duplicate PK
-        df = df %>% distinct(PK, .keep_all = TRUE)    
-        df$PrevMend.Mod.Dur.To.Worst[is.na(df$PrevMend.Mod.Dur.To.Worst)]=0
-        df$PrevMend.AssetSwp[is.na(df$PrevMend.AssetSwp)]=0
-        if (Ind_Lvl1!="ALL") df = subset(df, df$ML.Industry.Lvl.1==Ind_Lvl1)
-        if (Ind_Lvl2!="ALL") df = subset(df, df$ML.Industry.Lvl.2==Ind_Lvl2)
-        if (Ind_Lvl3!="ALL") df = subset(df, df$ML.Industry.Lvl.3==Ind_Lvl3)
-        if (Ind_Lvl4!="ALL") df = subset(df, df$ML.Industry.Lvl.4==Ind_Lvl4)
         
         # rename columns here
         setnames(df, old=c("PrevMend.AssetSwp", "Asset.Swap", "PrevMend.Mod.Dur.To.Worst", "Semi.Mod.Dur.To.Worst", "PrevMend.Mkt...Index.Wght", "Mkt...Index.Wght"), 
@@ -398,8 +401,12 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         # special handling for CurrentHoldings (limited financials)
         # if the last opinion is -3, and 2nd to last opinion is 1, 0 or -2, copy the score data
         if (CH) {
+            # ds3 = except for the last month
+            ds3 = subset(ds, ds$As.of.Date < max(ds$As.of.Date))
+            # ds1 = last month
             ds1 = subset(ds, ds$As.of.Date == max(ds$As.of.Date))
-            ds2 = subset(ds[,c("Cusip","M.OP","M.SCORE","M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11")], ds$As.of.Date == min(ds$As.of.Date))
+            # ds2 = 2nd to last month
+            ds2 = subset(ds3[,c("Cusip","M.OP","M.SCORE","M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11")], ds3$As.of.Date == max(ds3$As.of.Date))
             ds = merge(ds1, ds2, by.x="Cusip", by.y="Cusip", all.x=TRUE)
             ds$M.OP = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
                              ds$M.OP.y, ds$M.OP.x)
@@ -420,6 +427,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             
             ds = ds[, !(colnames(ds) %in% c("M.OP.x","M.SCORE.x","M.NA.x","T.SCORE.x","T.NA.x","L.SCORE.x","L.NA.x","M.FORMULA_11.x",
                                             "M.OP.y","M.SCORE.y","M.NA.y","T.SCORE.y","T.NA.y","L.SCORE.y","L.NA.y","M.FORMULA_11.y"))]
+            ds = rbind(ds, ds3)
         }
         ds$C.OP = ifelse(ds$M.OP==-4 | ds$M.OP==-3 | ds$M.OP==-1,ds$M.OP,
                          ifelse((ds$M.OP==-2 | ds$M.OP==-0) & ds$M.FORMULA_11>=HoldM.RatioCutOff,ds$M.OP,
@@ -615,11 +623,11 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             }
             ds_ma$AvgASW[is.na(ds_ma$AvgASW)]=subset(ds_ma, is.na(ds_ma$AvgASW))$AvgASWTemp
             ds_ma$AvgDuration[is.na(ds_ma$AvgDuration)]=subset(ds_ma, is.na(ds_ma$AvgDuration))$AvgDurationTemp
+            ds_ma = ds_ma[, c("Index", "Date", "AvgASW", "AvgDuration")]
+            ds = merge(ds, ds_ma, 
+                       by.x=c("Index", "Date"), by.y=c("Index", "Date"), all.x=TRUE)
         }
         
-        ds_ma = ds_ma[, c("Index", "Date", "AvgASW", "AvgDuration")]
-        ds = merge(ds, ds_ma, 
-                   by.x=c("Index", "Date"), by.y=c("Index", "Date"), all.x=TRUE)
         
         ds$BuyDurationMin = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "BuyDurationLow"]
         ds$BuyDurationMax = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "BuyDurationHigh"]
@@ -751,7 +759,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             } else {
                 ds = indexdata(Indices[j])
             }
-            ds$As.of.Date = as.Date(ds$As.of.Date, "%m/%d/%Y")
+            #ds$As.of.Date = as.Date(ds$As.of.Date, "%m/%d/%Y")
             ds = indexop(Indices[j], ds)
             
             # calculate thresholds
@@ -770,7 +778,10 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
                     th$Date = as.Date(th$Date, "%m/%d/%Y")
                 
             } else {
+                #print(nrow(ds))
                 th = indexth(Indices[j], ds)
+                if (CH) { ds = subset(ds, ds$As.of.Date == max(ds$As.of.Date))}
+                #print(nrow(ds))
                 if (j==1) {
                     if (CH) {
                         write.table(th, file = paste(RootFolder, "CH_THRESHOLDS.csv", sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
