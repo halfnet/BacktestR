@@ -1,3 +1,741 @@
+library(dplyr)
+library(stringr)
+library(mondate)
+library(DataCombine)
+library(data.table)
+library(openxlsx)
+library(TTR)
+
+########## global variables ##########
+CS.MaxRange.Q = 0
+CS.MaxRange.SA = 0
+CS.AdjEntryDate.123Q = 0
+CS.AdjEntryDate.1S = 0
+CS.AdjEntryDate.4Q = 0
+CS.AdjEntryDate.2S = 0
+CS.Opinion.NA = 0
+CS.TableOption = 0
+
+BuyM.RatioCutOff = 0
+HoldM.RatioCutOff = 0
+ConstructModelPortDtSPHold = 0
+ConstructModelPortDtSPBuy = 0
+
+TScoreHoldFilter = 0
+TScoreBuyFilter = 0
+TScoreCutOff = 0
+TScoreNA = 0
+OutPerformMultiple = 0
+MaxWeightPerName = 0
+MaxLimit = 0
+
+IndexDataFolder = ""
+Ind_Lvl1 = ""
+Ind_Lvl2 = ""
+Ind_Lvl3 = ""
+Ind_Lvl4 = ""
+
+TH.MinWght = 0
+TH.MA = 0
+
+params=NULL
+TH.Limits=NULL
+Indices=NULL
+
+trans=NULL
+scores=NULL
+
+init_var <- function() {
+    
+    ########## initialize variables ##########
+    params <<- read.csv("parameters.csv")
+    TH.Limits <<- read.csv("indices.csv")
+    TH.Limits <<- subset(TH.Limits, TH.Limits$Include==1)
+    if (grepl("-", TH.Limits$StartFrom[1]))
+        TH.Limits$StartFrom <<- as.Date(TH.Limits$StartFrom, "%Y-%m-%d")
+    else
+        TH.Limits$StartFrom <<- as.Date(TH.Limits$StartFrom, "%m/%d/%Y")
+    
+    Indices <<- as.vector(TH.Limits$Indices)
+    ########## setting parameters ##########
+    CS.MaxRange.Q <<- as.numeric(as.vector(params$value[params$name=="CS.MaxRange.Q"]))
+    CS.MaxRange.SA <<- as.numeric(as.vector(params$value[params$name=="CS.MaxRange.SA"]))
+    CS.AdjEntryDate.123Q <<- as.numeric(as.vector(params$value[params$name=="CS.AdjEntryDate.123Q"]))
+    CS.AdjEntryDate.1S <<- as.numeric(as.vector(params$value[params$name=="CS.AdjEntryDate.1S"]))
+    CS.AdjEntryDate.4Q <<- as.numeric(as.vector(params$value[params$name=="CS.AdjEntryDate.4Q"]))
+    CS.AdjEntryDate.2S <<- as.numeric(as.vector(params$value[params$name=="CS.AdjEntryDate.2S"]))
+    CS.Opinion.NA <<- as.numeric(as.vector(params$value[params$name=="CS.Opinion.NA"]))
+    CS.TableOption <<- as.numeric(as.vector(params$value[params$name=="CS.TableOption"]))
+    
+    BuyM.RatioCutOff <<- as.numeric(as.vector(params$value[params$name=="BuyM.RatioCutOff"]))
+    HoldM.RatioCutOff <<- as.numeric(as.vector(params$value[params$name=="HoldM.RatioCutOff"]))
+    ConstructModelPortDtSPHold <<- as.numeric(as.vector(params$value[params$name=="ConstructModelPortDtSPHold"]))
+    ConstructModelPortDtSPBuy <<- as.numeric(as.vector(params$value[params$name=="ConstructModelPortDtSPBuy"]))
+    
+    TScoreHoldFilter <<- as.numeric(as.vector(params$value[params$name=="TScoreHoldFilter"]))
+    TScoreBuyFilter <<- as.numeric(as.vector(params$value[params$name=="TScoreBuyFilter"]))
+    TScoreCutOff <<- as.numeric(as.vector(params$value[params$name=="TScoreCutOff"]))
+    TScoreNA <<- as.numeric(as.vector(params$value[params$name=="TScoreNA"]))
+    OutPerformMultiple <<- as.numeric(as.vector(params$value[params$name=="OutPerformMultiple"]))
+    MaxWeightPerName <<- as.integer(as.vector(params$value[params$name=="MaxWeightPerName"]))
+    MaxLimit <<- MaxWeightPerName - 0.05
+    
+    IndexDataFolder <<- as.character(as.vector(params$value[params$name=="IndexDataFolder"]))
+    CompanyScoreFolder <<- as.character(as.vector(params$value[params$name=="CompanyScoreFolder"]))
+    Ind_Lvl1 <<- as.character(as.vector(params$value[params$name=="Ind_Lvl1"]))
+    Ind_Lvl2 <<- as.character(as.vector(params$value[params$name=="Ind_Lvl2"]))
+    Ind_Lvl3 <<- as.character(as.vector(params$value[params$name=="Ind_Lvl3"]))
+    Ind_Lvl4 <<- as.character(as.vector(params$value[params$name=="Ind_Lvl4"]))
+    
+    TH.MinWght <<- as.numeric(as.vector(params$value[params$name=="TH.MinWght"]))
+    TH.MA <<- as.numeric(as.vector(params$value[params$name=="TH.MA"]))
+}
+
+# this function loads translation template
+loadtrans <- function(RootFolder) {
+    
+    ########## load translation file ##########
+    trans = read.xlsx(xlsxFile=paste(RootFolder, "Translation template.xlsx", sep = ""),
+                      sheet = "Bond translation",
+                      startRow = 14,
+                      detectDates = TRUE,
+                      na.strings = c(""),
+                      cols = c(1,5,17,18))
+    trans = subset(trans, is.na(trans$Bond.Ticker)==FALSE)
+    trans = subset(trans, trimws(trans$Bond.Ticker)!="")
+    # remove duplicated date + ticker
+    trans = trans %>% distinct(FROM.DATE.LINK,Bond.Ticker, .keep_all = TRUE)
+    trans = trans[order(trans$Bond.Ticker, trans$FROM.DATE.LINK),]
+    trans$index = seq.int(nrow(trans))-1
+    trans$index1 = trans$index + 1
+    trans$index = paste(trans$Bond.Ticker, trans$index)
+    trans$index1 = paste(trans$Bond.Ticker, trans$index1)
+    trans = merge(trans, trans[ , c("index","FROM.DATE.LINK")],
+                  by.x="index1", by.y="index", all.x=TRUE)
+    names(trans)[names(trans) == "FROM.DATE.LINK.x"] = "FROM.DATE.LINK"
+    names(trans)[names(trans) == "FROM.DATE.LINK.y"] = "TO.DATE.LINK"
+    trans$TO.DATE.LINK = ifelse(is.na(trans$TO.DATE.LINK), "2020-01-01", trans$TO.DATE.LINK)
+    # convert TO.DATE.LINK back to date type
+    trans$TO.DATE.LINK =as.Date(trans$TO.DATE.LINK, "%Y-%m-%d")
+    # convert FROM.DATE.LINK back to date type
+    trans$FROM.DATE.LINK =as.Date(trans$FROM.DATE.LINK, "%Y-%m-%d")
+    trans$ID_BB_UNIQUE = gsub("EQ", "", trans$ID_BB_UNIQUE)
+    trans = transform(trans, ID_BB_UNIQUE = as.numeric(ID_BB_UNIQUE))
+    
+    return (trans)
+}
+
+# this function returns index monthly file
+indexmonthlydata <- function(index, RootFolder, IndexDataFolder) {
+    file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "Monthly", sep=""),
+                            pattern='*.csv',
+                            full.names=TRUE)
+    df <- lapply(file.list, read.csv, skip=3, sep=";")
+    df <- do.call("rbind", df)
+    df=subset(df, df$Index.Name==index)
+    df$As.of.Date=as.Date(df$As.of.Date, "%m/%d/%Y")
+    df$Maturity.Date=as.Date(df$Maturity.Date, "%m/%d/%Y")
+    colnames(df)[6] = "Bond.Name"
+    # remove unused columns
+    df = df[, !(colnames(df) %in% c("Description", "X"))]    
+    return(df)
+}
+#test = indexmonthlydata("HPID")
+
+# this function returns index file
+indexdata <- function(index, RootFolder, IndexDataFolder, StartFrom) {
+    file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "BOFA ", index, " index history", sep=""),
+                            pattern='*.xlsx',
+                            full.names=TRUE)
+    df <- lapply(file.list, read.xlsx)
+    df <- do.call("rbind", df)
+    df$As.of.Date=as.Date(as.character(df$As.of.Date), "%Y%m%d")
+    df = subset(df, df$As.of.Date>=StartFrom)
+    # converting from excel date to R
+    # surpress warning
+    #options(warn = -1)
+    df$Maturity.Date=suppressWarnings(as.Date(as.numeric(df$Maturity.Date), origin="1899-12-30"))
+    #options(warn = 0)
+    
+    colnames(df)[6] = "Bond.Name"
+    # remove unused columns
+    df = df[, !(colnames(df) %in% c("Description"))]
+    # rename columns
+    names(df)[names(df) == "Mkt.%.Index.Wght"] = "Mkt...Index.Wght"
+    names(df)[names(df) == "PrevMend.Mkt.%.Index.Wght"] = "PrevMend.Mkt...Index.Wght"
+    names(df)[names(df) == "TRR.%.MTD.LOC"] = "TRR...MTD.LOC"
+    names(df)[names(df) == "Excess.Rtn.%.MTD"] = "Excess.Rtn...MTD"
+    
+    # add monthly files    
+    df=rbind(df, indexmonthlydata(index, RootFolder, IndexDataFolder))   
+    df=subset(df, df$Ticker!="CASH")
+    df$PK=paste(df$Index.Name, df$Cusip, df$As.of.Date, sep="")
+    # remove duplicate PK
+    df = df %>% distinct(PK, .keep_all = TRUE)    
+    df$PrevMend.Mod.Dur.To.Worst[is.na(df$PrevMend.Mod.Dur.To.Worst)]=0
+    df$PrevMend.AssetSwp[is.na(df$PrevMend.AssetSwp)]=0
+    if (Ind_Lvl1!="ALL") df = subset(df, df$ML.Industry.Lvl.1==Ind_Lvl1)
+    if (Ind_Lvl2!="ALL") df = subset(df, df$ML.Industry.Lvl.2==Ind_Lvl2)
+    if (Ind_Lvl3!="ALL") df = subset(df, df$ML.Industry.Lvl.3==Ind_Lvl3)
+    if (Ind_Lvl4!="ALL") df = subset(df, df$ML.Industry.Lvl.4==Ind_Lvl4)
+    return(df)
+}
+#test2 = indexdata("HPID")
+
+# this function returns current holdings file
+ch_data <- function(index, RootFolder, IndexDataFolder, StartFrom) {
+    #print(TH.MA)
+    file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "CurrentHoldings", sep=""),
+                            pattern='*.csv',
+                            full.names=TRUE)
+    if (length(file.list) >0) {
+        # if projected file exist
+        df <- lapply(file.list, read.csv, skip=3, sep=";")
+        df <- do.call("rbind", df)
+        df=subset(df, df$Index.Name==index)
+        df$As.of.Date=as.Date(df$As.of.Date, "%m/%d/%Y")
+        df$Maturity.Date=as.Date(df$Maturity.Date, "%m/%d/%Y")
+        colnames(df)[6] = "Bond.Name"
+        # remove unused columns
+        df = df[, !(colnames(df) %in% c("Description", "X"))]    
+        df=subset(df, df$Ticker!="CASH")
+        df$PK=paste(df$Index.Name, df$Cusip, df$As.of.Date, sep="")
+        # remove duplicate PK
+        df = df %>% distinct(PK, .keep_all = TRUE)    
+        df$PrevMend.Mod.Dur.To.Worst[is.na(df$PrevMend.Mod.Dur.To.Worst)]=0
+        df$PrevMend.AssetSwp[is.na(df$PrevMend.AssetSwp)]=0
+        if (Ind_Lvl1!="ALL") df = subset(df, df$ML.Industry.Lvl.1==Ind_Lvl1)
+        if (Ind_Lvl2!="ALL") df = subset(df, df$ML.Industry.Lvl.2==Ind_Lvl2)
+        if (Ind_Lvl3!="ALL") df = subset(df, df$ML.Industry.Lvl.3==Ind_Lvl3)
+        if (Ind_Lvl4!="ALL") df = subset(df, df$ML.Industry.Lvl.4==Ind_Lvl4)
+        
+        # add X more month from regular index file
+        df2 = indexdata(index, RootFolder, IndexDataFolder, StartFrom)
+        # get rid of the monthly file that is later than the project file
+        df2 = subset(df2, df2$As.of.Date<max(df$As.of.Date))
+        #print(nrow(df2))
+        df2 = subset(df2, df2$As.of.Date<=max(df2$As.of.Date) & df2$As.of.Date>=as.Date(as.mondate(max(df2$As.of.Date))-TH.MA+1))
+        df = rbind(df, df2)
+    } else {
+        # if projected file doesn't exist, return X most recent months
+        df = indexdata(index, RootFolder, IndexDataFolder, StartFrom)
+        #print(nrow(df))
+        df = subset(df, df$As.of.Date<=max(df$As.of.Date) & df$As.of.Date>=as.Date(as.mondate(max(df$As.of.Date))-TH.MA))
+    }
+    
+    # rename columns here
+    setnames(df, old=c("PrevMend.AssetSwp", "Asset.Swap", "PrevMend.Mod.Dur.To.Worst", "Semi.Mod.Dur.To.Worst", "PrevMend.Mkt...Index.Wght", "Mkt...Index.Wght"), 
+             new=c("Asset.Swap", "PrevMend.AssetSwp", "Semi.Mod.Dur.To.Worst", "PrevMend.Mod.Dur.To.Worst", "Mkt...Index.Wght", "PrevMend.Mkt...Index.Wght"))
+    
+    return(df)
+}
+#test3 = ch_data("HPID")
+
+monthStart <- function(x) {
+    x <- as.POSIXlt(x)
+    x$mday <- 1
+    as.Date(x)
+}
+
+scoreToOp1 <- function(rf, na0, na1, na2, t0, t1, t2) {
+    ifelse(rf=="Q",
+           ifelse(na0>CS.Opinion.NA,-3,
+                  ifelse(t0>=9,1,
+                         ifelse(t0==8 & (na1<=CS.Opinion.NA & t1>=9),1,
+                                ifelse(t0==8 & (na1<=CS.Opinion.NA & t1==8) & (na2<=CS.Opinion.NA & t2>=8),1, 
+                                       ifelse(t0<=3,-1,
+                                              ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4) & (na2<=CS.Opinion.NA & t2<=4),-1,
+                                                     ifelse(t0>=7 & (na1<=CS.Opinion.NA & t1>=7),0,-2))))))),
+           ifelse(na0>CS.Opinion.NA,-3,
+                  ifelse(t0>=9,1,
+                         ifelse(t0==8 & (na1<=CS.Opinion.NA & t1>=8),1,
+                                ifelse(t0<=3,-1,
+                                       ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4),-1,
+                                              ifelse(t0>=7,0,-2))))))
+    )
+    
+}
+
+scoreToOp2 <- function(rf, na0, na1, na2, t0, t1, t2) {
+    ifelse(rf=="Q",
+           ifelse(na0>CS.Opinion.NA,-2,
+                  ifelse(t0>=9,0,
+                         ifelse(t0==8 & (na1<=CS.Opinion.NA & t1>=9),0,
+                                ifelse(t0==8 & (na1<=CS.Opinion.NA & t1==8) & (na2<=CS.Opinion.NA & t2>=8),0, 
+                                       ifelse(t0<=3,-1,
+                                              ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4) & (na2<=CS.Opinion.NA & t2<=4),-1,
+                                                     ifelse(t0>=7 & (na1<=CS.Opinion.NA & t1>=7),0,NA))))))),
+           ifelse(na0>CS.Opinion.NA,-2,
+                  ifelse(t0>=9,0,
+                         ifelse(t0==8 & (na1<=CS.Opinion.NA & t1>=8),0,
+                                ifelse(t0<=3,-1,
+                                       ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4),-1,
+                                              ifelse(t0>=7,0,NA))))))
+    )
+}
+
+# this function convert score to opinion by company
+scoreToOp <- function(df) {
+    df = df[order(df$AdjDate),]
+    df$M.OP1 = scoreToOp1(df$RF, df$M.NA, df$T1.M.NA, df$T2.M.NA, df$M.SCORE, df$T1.M.SCORE, df$T2.M.SCORE)
+    df$M.OP2 = scoreToOp2(df$RF, df$M.NA, df$T1.M.NA, df$T2.M.NA, df$M.SCORE, df$T1.M.SCORE, df$T2.M.SCORE)
+    df = FillDown(df, 'M.OP2')
+    df$M.OP2[is.na(df$M.OP2)] = -2
+    df$M.OP = ifelse(df$M.OP1==-3|df$M.OP1==-1|df$M.OP1==0|df$M.OP1==1, df$M.OP1, df$M.OP2)    
+    return (df)
+}
+
+
+
+# this function turns scores into opinions
+scores2opinions <- function(RootFolder) {
+    
+    ########## scores to opinions ##########
+    transRF = trans[, c("ID_BB_UNIQUE","REPORTING_FREQUENCY")]
+    transRF = subset(transRF, is.na(transRF$REPORTING_FREQUENCY)==FALSE)
+    transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="")
+    transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="A")
+    transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="0")
+    # remove duplicated date + ticker
+    transRF = transRF %>% distinct(ID_BB_UNIQUE,REPORTING_FREQUENCY, .keep_all = TRUE)
+    
+    scores = read.csv(paste(RootFolder, CompanyScoreFolder, "BondsScoresBackT.csv", sep = ""))
+    scores = subset(scores, trimws(scores$BBERG_ID)!="")
+    scores = subset(scores, nchar(as.character(scores$COMPANY_QUARTER))==6)
+    scores = subset(scores, scores$TABLES!="RS")
+    names(scores)[names(scores) == "MOMENTUM_11"] = "M.FORMULA_11"
+    scores = scores[ ,c("BBERG_ID","TABLES","COMPANY_QUARTER","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","DT_ENTRY","DATE")]
+    scores$BBERG_ID = gsub("EQ", "", scores$BBERG_ID)
+    scores = transform(scores, BBERG_ID = as.numeric(BBERG_ID))
+    
+    scores$DATE = as.Date(scores$DATE, "%b %d %Y")
+    scores$DT_ENTRY = as.Date(scores$DT_ENTRY, "%b %d %Y")
+    scores$COMPANY_QUARTER = substr(scores$COMPANY_QUARTER,1,2)
+    scores$AdjDate = ifelse(scores$COMPANY_QUARTER=="4Q",scores$DATE+CS.AdjEntryDate.4Q,
+                            ifelse(scores$COMPANY_QUARTER=="1S",scores$DATE+CS.AdjEntryDate.1S,
+                                   ifelse(scores$COMPANY_QUARTER=="2S",scores$DATE+CS.AdjEntryDate.2S,
+                                          scores$DATE+CS.AdjEntryDate.123Q)))
+    scores$AdjDate = ifelse(scores$DT_ENTRY>scores$AdjDate,scores$AdjDate,scores$DT_ENTRY)
+    scores$AdjDate =as.Date(scores$AdjDate, origin="1970-01-01")
+    
+    scores = merge(scores, transRF, by.x="BBERG_ID", by.y="ID_BB_UNIQUE")
+    if (CS.TableOption==1) {
+        scores$FilterByTable = ifelse(scores$TABLES=="OR" & grepl("M", scores$REPORTING_FREQUENCY),1,
+                                      ifelse(scores$TABLES=="MR" & !grepl("M", scores$REPORTING_FREQUENCY),1,0))
+    } else if  (CS.TableOption==2) {
+        scores$FilterByTable = ifelse(scores$TABLES=="OR",1,0)
+    } else if  (CS.TableOption==3) {
+        scores$FilterByTable = ifelse(scores$TABLES=="MR",1,0)    
+    } else {
+        scores$FilterByTable = 1
+    }
+    scores = subset(scores, scores$FilterByTable==1)
+    scores$RF = ifelse(grepl("Q", scores$REPORTING_FREQUENCY), "Q", "SA")
+    scores = scores[, !(colnames(scores) %in% c("DT_ENTRY","DATE","FilterByTable","COMPANY_QUARTER","REPORTING_FREQUENCY"))]
+    scores = scores[order(scores$BBERG_ID, scores$AdjDate),]
+    scores$index = seq.int(nrow(scores))-1
+    scores$index1 = scores$index + 1
+    scores$index2 = scores$index + 2
+    scores$index = paste(scores$BBERG_ID, "#", scores$index)
+    scores$index1 = paste(scores$BBERG_ID, "#", scores$index1)
+    scores$index2 = paste(scores$BBERG_ID, "#", scores$index2)
+    scores = merge(scores, scores[ , c("index1","M.SCORE", "M.NA")],
+                   by.x="index", by.y="index1", all.x=TRUE)
+    names(scores)[names(scores) == "M.SCORE.x"] = "M.SCORE"
+    names(scores)[names(scores) == "M.NA.x"] = "M.NA"
+    names(scores)[names(scores) == "M.SCORE.y"] = "T1.M.SCORE"
+    names(scores)[names(scores) == "M.NA.y"] = "T1.M.NA"
+    scores = merge(scores, scores[ , c("index2","M.SCORE", "M.NA")],
+                   by.x="index", by.y="index2", all.x=TRUE)
+    names(scores)[names(scores) == "M.SCORE.x"] = "M.SCORE"
+    names(scores)[names(scores) == "M.NA.x"] = "M.NA"
+    names(scores)[names(scores) == "M.SCORE.y"] = "T2.M.SCORE"
+    names(scores)[names(scores) == "M.NA.y"] = "T2.M.NA"
+    
+    scores$T1.M.SCORE[is.na(scores$T1.M.SCORE)] = -1
+    scores$T2.M.SCORE[is.na(scores$T2.M.SCORE)] = -1
+    scores$T1.M.NA[is.na(scores$T1.M.NA)] = 99
+    scores$T2.M.NA[is.na(scores$T2.M.NA)] = 99
+    
+    # next group data by BBERG_ID and loop thru each BBERG_ID to determine M.OP
+    companies = scores %>% split(f=scores$BBERG_ID)
+    companies = lapply(companies, scoreToOp)
+    opinions = do.call(rbind,companies)
+    
+    opinions = opinions[, !(colnames(opinions) %in% c("RF","index","index1","index2","T1.M.SCORE","T2.M.SCORE","T1.M.NA","T2.M.NA","M.OP1","M.OP2"))]
+    return(opinions)
+}    
+
+
+# this function returns index file after joining scores
+indexop <- function(index, ds, CH, CH_OpinionDate) {
+    
+    # joining index file to translation file
+    ds2 = ds[, c("Ticker","As.of.Date","PK")]
+    ds2 = merge(ds2, trans[ , c("Bond.Ticker","FROM.DATE.LINK","TO.DATE.LINK","ID_BB_UNIQUE","REPORTING_FREQUENCY")], 
+                by.x="Ticker", by.y="Bond.Ticker", all.x=TRUE)
+    ds2 = subset(ds2, ds2$As.of.Date>=ds2$FROM.DATE.LINK 
+                 & ds2$As.of.Date<ds2$TO.DATE.LINK)
+    ds2 = ds2[, !(colnames(ds2) %in% c("FROM.DATE.LINK","TO.DATE.LINK"))]
+    if (CH) {
+        # special handling for CH, looking back from the last "As.of.Date"
+        ds2$FROM.DATE.LINK = ifelse(grepl("Q", ds2$REPORTING_FREQUENCY), 
+                                    max(ds2$As.of.Date)+CS.MaxRange.Q,
+                                    max(ds2$As.of.Date)+CS.MaxRange.SA)
+    } else {
+        ds2$FROM.DATE.LINK = ifelse(grepl("Q", ds2$REPORTING_FREQUENCY), 
+                                    ds2$As.of.Date+CS.MaxRange.Q,
+                                    ds2$As.of.Date+CS.MaxRange.SA)
+    }
+    # convert FROM.DATE.LINK back to date type
+    ds2$FROM.DATE.LINK =as.Date(ds2$FROM.DATE.LINK, origin="1970-01-01")
+    ds2$TO.DATE.LINK = monthStart(ds2$As.of.Date)
+    if (CH) {
+        # special handling for CH, the last "As.of.Date" to use user set opinion date
+        ds2$TO.DATE.LINK[ds2$As.of.Date==max(ds2$As.of.Date)] = CH_OpinionDate
+    }
+    
+    # get rid of columns no longer needed
+    ds2 = ds2[, !(colnames(ds2) %in% c("Ticker","As.of.Date"))]
+    
+    ###### longest running merge #######
+    # joining index file to company scores (unequal join using data.table object)
+    scores$AdjDate2 = scores$AdjDate
+    ds2=setDT(ds2)[setDT(scores), on=.(ID_BB_UNIQUE=BBERG_ID, FROM.DATE.LINK<=AdjDate2, TO.DATE.LINK>AdjDate2),nomatch=0,allow.cartesian=TRUE]
+    # convert data.table back to data.frame    
+    ds2=as.data.frame(ds2)
+    ds2 = ds2[, !(colnames(ds2) %in% c("FROM.DATE.LINK","TO.DATE.LINK"))]
+    # keep only the top 1 AdjDate for each PK
+    ds2 = ds2[order(ds2$PK, ds2$AdjDate),]
+    ds2 = ds2 %>% dplyr::mutate(rn = row_number()) %>% group_by(PK) %>% top_n(1, rn)
+    # reformat Company ID back to its original format
+    ds2$ID_BB_UNIQUE = paste("EQ", str_pad(ds2$ID_BB_UNIQUE, 16, pad = "0"), sep = "")
+    
+    # final join
+    ds = merge(ds, ds2, by.x="PK", by.y="PK", all.x=TRUE)
+    # destroy ds2
+    rm(ds2)
+    gc()
+    
+    # clean up M.OP and determine C.OP
+    ds$M.OP = ifelse(is.na(ds$M.OP),-4,ds$M.OP)
+    # special handling for CurrentHoldings (limited financials)
+    # if the last opinion is -3, and 2nd to last opinion is 1, 0 or -2, copy the score data
+    if (CH) {
+        # ds3 = except for the last month
+        ds3 = subset(ds, ds$As.of.Date < max(ds$As.of.Date))
+        # ds1 = last month
+        ds1 = subset(ds, ds$As.of.Date == max(ds$As.of.Date))
+        # ds2 = 2nd to last month
+        ds2 = subset(ds3[,c("Cusip","M.OP","M.SCORE","M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11")], ds3$As.of.Date == max(ds3$As.of.Date))
+        ds = merge(ds1, ds2, by.x="Cusip", by.y="Cusip", all.x=TRUE)
+        ds$M.OP = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                         ds$M.OP.y, ds$M.OP.x)
+        ds$M.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
+                            ds$M.SCORE.y, ds$M.SCORE.x)
+        ds$M.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
+                         ds$M.NA.y, ds$M.NA.x)
+        ds$T.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
+                            ds$T.SCORE.y, ds$T.SCORE.x)
+        ds$T.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
+                         ds$T.NA.y, ds$T.NA.x)
+        ds$L.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
+                            ds$L.SCORE.y, ds$L.SCORE.x)
+        ds$L.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
+                         ds$L.NA.y, ds$L.NA.x)
+        ds$M.FORMULA_11 = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
+                                 ds$M.FORMULA_11.y, ds$M.FORMULA_11.x)
+        
+        ds = ds[, !(colnames(ds) %in% c("M.OP.x","M.SCORE.x","M.NA.x","T.SCORE.x","T.NA.x","L.SCORE.x","L.NA.x","M.FORMULA_11.x",
+                                        "M.OP.y","M.SCORE.y","M.NA.y","T.SCORE.y","T.NA.y","L.SCORE.y","L.NA.y","M.FORMULA_11.y"))]
+        ds = rbind(ds, ds3)
+    }
+    ds$C.OP = ifelse(ds$M.OP==-4 | ds$M.OP==-3 | ds$M.OP==-1,ds$M.OP,
+                     ifelse((ds$M.OP==-2 | ds$M.OP==-0) & ds$M.FORMULA_11>=HoldM.RatioCutOff,ds$M.OP,
+                            ifelse(ds$M.OP==1 & ds$M.FORMULA_11>=BuyM.RatioCutOff,ds$M.OP,-1)))
+    
+    return(ds)
+}
+
+# this function returns threshold file
+indexopt <- function(df) {
+    df = df[order(df$Index,df$Date),]
+    indexmonths = split(df, paste(df$Index, df$Date))
+    
+    MinWght = TH.MinWght
+    
+    DurationCutOff = 0
+    DurationMax = 20
+    ASWCutOff = 0
+    ASWMax = 10000
+    DurationStep = 0.05
+    ASWStep = 10
+    
+    
+    thresholds <- data.frame(matrix(ncol = 21, nrow = 0))
+    colnames(thresholds) = c("Index", "Date", 
+                             "BuyDurationCutOff", "BuyDurationMax", "BuyASWCutOff", "BuyASWMax",
+                             "HoldDurationCutOff", "HoldDurationMax", "HoldASWCutOff", "HoldASWMax", 
+                             "obsindex", "obsbuy", "obshold",
+                             "IndexDuration", "IndexASW", "PortDuration", "PortASW",
+                             "BuyDuration", "BuyASW", "HoldDuration", "HoldASW")
+    
+    PrevHoldDurationCutOff = DurationCutOff
+    PrevBuyDurationCutOff = DurationCutOff
+    PrevHoldDurationMax = DurationMax
+    PrevBuyDurationMax = DurationMax
+    PrevHoldASWCutOff = ASWCutOff
+    PrevBuyASWCutOff = ASWCutOff
+    PrevHoldASWMax = ASWMax
+    PrevBuyASWMax = ASWMax
+    
+    
+    for (i in 1:length(indexmonths)){
+        im = indexmonths[[i]]
+        HoldDurationCutOff = DurationCutOff
+        BuyDurationCutOff = DurationCutOff
+        HoldDurationMax = DurationMax
+        BuyDurationMax = DurationMax
+        HoldASWCutOff = ASWCutOff
+        BuyASWCutOff = ASWCutOff
+        HoldASWMax = ASWMax
+        BuyASWMax = ASWMax
+        
+        
+        # Hold
+        continue = TRUE
+        solution = FALSE
+        while (continue) {
+            im$OP = ifelse(im$C.OP==1 & im$ASW>=BuyASWCutOff & im$ASW<=BuyASWMax
+                           & im$Duration>=BuyDurationCutOff & im$Duration<=BuyDurationMax,1,
+                           ifelse((im$C.OP==0 | im$C.OP==-2) & im$ASW>=HoldASWCutOff & im$ASW<=HoldASWMax
+                                  & im$Duration>=HoldDurationCutOff & im$Duration<=HoldDurationMax,0,-1))
+            im$PortWght = ifelse(im$OP==1, im$IndexWght*3, ifelse(im$OP==0, im$IndexWght,0))
+            curPortWght = sum(im$PortWght)
+            avgHoldDuration = weighted.mean(im$Duration[im$OP==0], im$IndexWght[im$OP==0])
+            avgHoldASW = weighted.mean(im$ASW[im$OP==0], im$IndexWght[im$OP==0])
+            if (is.nan(avgHoldDuration) | is.nan(avgHoldASW)) {
+                continue = FALSE            
+            }
+            else if (curPortWght < MinWght) {
+                continue = FALSE
+            }
+            else if (avgHoldDuration < im$HoldDurationMin[1]) {
+                HoldDurationCutOff = HoldDurationCutOff + DurationStep
+            } else if (avgHoldDuration > im$HoldDurationMax[1]) {
+                HoldDurationMax = HoldDurationMax - DurationStep
+            } else if (avgHoldASW < im$HoldASWMin[1]) {
+                HoldASWCutOff = HoldASWCutOff + ASWStep
+            } else if (avgHoldASW > im$HoldASWMax[1]) {
+                HoldASWMax = HoldASWMax - ASWStep
+            } else {
+                solution = TRUE
+                continue = FALSE
+            }
+            
+        }
+        
+        # Buy
+        continue = TRUE
+        solution = FALSE
+        while (continue) {
+            im$OP = ifelse(im$C.OP==1 & im$ASW>=BuyASWCutOff & im$ASW<=BuyASWMax
+                           & im$Duration>=BuyDurationCutOff & im$Duration<=BuyDurationMax,1,
+                           ifelse((im$C.OP==0 | im$C.OP==-2) & im$ASW>=HoldASWCutOff & im$ASW<=HoldASWMax
+                                  & im$Duration>=HoldDurationCutOff & im$Duration<=HoldDurationMax,0,-1))
+            im$PortWght = ifelse(im$OP==1, im$IndexWght*3, ifelse(im$OP==0, im$IndexWght,0))
+            curPortWght = sum(im$PortWght)
+            avgBuyDuration = weighted.mean(im$Duration[im$OP==1], im$IndexWght[im$OP==1])
+            avgBuyASW = weighted.mean(im$ASW[im$OP==1], im$IndexWght[im$OP==1])
+            if (is.nan(avgBuyDuration) | is.nan(avgBuyASW)) {
+                continue = FALSE
+            }
+            else if (curPortWght < MinWght) {
+                continue = FALSE
+            }
+            else if (avgBuyDuration < im$BuyDurationMin[1]) {
+                BuyDurationCutOff = BuyDurationCutOff + DurationStep
+            } else if (avgBuyDuration > im$BuyDurationMax[1]) {
+                BuyDurationMax = BuyDurationMax - DurationStep
+            } else if (avgBuyASW < im$BuyASWMin[1]) {
+                BuyASWCutOff = BuyASWCutOff + ASWStep
+            } else if (avgBuyASW > im$BuyASWMax[1]) {
+                BuyASWMax = BuyASWMax - ASWStep
+            } else {
+                solution = TRUE
+                continue = FALSE
+            }
+            
+        }
+        
+        
+        if (solution) {
+            # if solution found, save as prev month
+            PrevHoldDurationCutOff = HoldDurationCutOff
+            PrevBuyDurationCutOff = BuyDurationCutOff
+            PrevHoldDurationMax = HoldDurationMax
+            PrevBuyDurationMax = BuyDurationMax
+            PrevHoldASWCutOff = HoldASWCutOff
+            PrevBuyASWCutOff = BuyASWCutOff
+            PrevHoldASWMax = HoldASWMax
+            PrevBuyASWMax = BuyASWMax
+        } else {
+            # if solution not found, use prev month
+            HoldDurationCutOff = PrevHoldDurationCutOff
+            BuyDurationCutOff = PrevBuyDurationCutOff
+            HoldDurationMax = PrevHoldDurationMax
+            BuyDurationMax = PrevBuyDurationMax
+            HoldASWCutOff = PrevHoldASWCutOff
+            BuyASWCutOff = PrevBuyASWCutOff
+            HoldASWMax = PrevHoldASWMax
+            BuyASWMax = PrevBuyASWMax
+            im$OP = ifelse(im$C.OP==1 & im$ASW>=BuyASWCutOff & im$ASW<=BuyASWMax
+                           & im$Duration>=BuyDurationCutOff & im$Duration<=BuyDurationMax,1,
+                           ifelse((im$C.OP==0 | im$C.OP==-2) & im$ASW>=HoldASWCutOff & im$ASW<=HoldASWMax
+                                  & im$Duration>=HoldDurationCutOff & im$Duration<=HoldDurationMax,0,-1))
+        }
+        
+        obsindex = nrow(im)
+        obsbuy = nrow(im[im$OP==1,])
+        obshold = nrow(im[im$OP==0,])
+        im$PortWght = ifelse(im$OP==1, im$IndexWght*3, ifelse(im$OP==0, im$IndexWght,0))
+        IndexDuration = weighted.mean(im$Duration, im$IndexWght)
+        PortDuration = weighted.mean(im$Duration[im$PortWght>0], im$PortWght[im$PortWght>0])
+        BuyDuration = weighted.mean(im$Duration[im$OP==1], im$IndexWght[im$OP==1]) 
+        HoldDuration = weighted.mean(im$Duration[im$OP==0 | im$OP==-2], im$IndexWght[im$OP==0 | im$OP==-2]) 
+        IndexASW = weighted.mean(im$ASW, im$IndexWght)
+        PortASW = weighted.mean(im$ASW[im$PortWght>0], im$PortWght[im$PortWght>0])
+        BuyASW = weighted.mean(im$ASW[im$OP==1], im$IndexWght[im$OP==1]) 
+        HoldASW = weighted.mean(im$ASW[im$OP==0 | im$OP==-2], im$IndexWght[im$OP==0 | im$OP==-2]) 
+        
+        thresholds<-rbind(thresholds, data.frame(Index=im$Index[1],Date=im$Date[1],
+                                                 BuyDurationCutOff=BuyDurationCutOff, BuyDurationMax=BuyDurationMax,
+                                                 BuyASWCutOff=BuyASWCutOff, BuyASWMax=BuyASWMax,
+                                                 HoldDurationCutOff=HoldDurationCutOff, HoldDurationMax=HoldDurationMax,
+                                                 HoldASWCutOff=HoldASWCutOff, HoldASWMax=HoldASWMax,
+                                                 obsindex=obsindex,obsbuy=obsbuy,obshold=obshold,
+                                                 IndexDuration=IndexDuration,PortDuration=PortDuration,IndexASW=IndexASW,PortASW=PortASW,
+                                                 BuyDuration=BuyDuration,HoldDuration=HoldDuration,BuyASW=BuyASW,HoldASW=HoldASW))
+        
+    }
+    return (thresholds)
+}
+
+# this function calc thresholds with optimization logic
+indexth <- function(index, ds) {
+    ds$Date = as.character(ds$As.of.Date)
+    names(ds)[names(ds) == "Index.Name"] = "Index"
+    names(ds)[names(ds) == "PrevMend.Mkt...Index.Wght"] = "IndexWght"
+    names(ds)[names(ds) == "PrevMend.Mod.Dur.To.Worst"] = "Duration"
+    names(ds)[names(ds) == "PrevMend.AssetSwp"] = "ASW"
+    ds = ds[, c("Index", "Date", "IndexWght", "Duration", "ASW", "C.OP")]
+    ### try use moving average here ###
+    #print(TH.MA)
+    if (TH.MA==1) {
+        ds$AvgDuration = ave(ds$IndexWght/100*ds$Duration, ds$Date, FUN=sum)
+        ds$AvgASW = ave(ds$IndexWght/100*ds$ASW, ds$Date, FUN=sum)
+    } else {
+        ds_ma = group_by(ds,Index,Date) %>% 
+            summarize(AvgASWTemp = sum(IndexWght/100*ASW), AvgDurationTemp = sum(IndexWght/100*Duration))
+        ds_ma$AvgASW=runMean(ds_ma$AvgASWTemp, TH.MA)
+        ds_ma$AvgDuration=runMean(ds_ma$AvgDurationTemp, TH.MA)
+        for (i in (TH.MA-1):2) {
+            ds_ma$AvgASW[is.na(ds_ma$AvgASW)]=runMean(subset(ds_ma, is.na(ds_ma$AvgASW))$AvgASWTemp, i)
+            ds_ma$AvgDuration[is.na(ds_ma$AvgDuration)]=runMean(subset(ds_ma, is.na(ds_ma$AvgDuration))$AvgDurationTemp, i)
+        }
+        ds_ma$AvgASW[is.na(ds_ma$AvgASW)]=subset(ds_ma, is.na(ds_ma$AvgASW))$AvgASWTemp
+        ds_ma$AvgDuration[is.na(ds_ma$AvgDuration)]=subset(ds_ma, is.na(ds_ma$AvgDuration))$AvgDurationTemp
+        ds_ma = ds_ma[, c("Index", "Date", "AvgASW", "AvgDuration")]
+        ds = merge(ds, ds_ma, 
+                   by.x=c("Index", "Date"), by.y=c("Index", "Date"), all.x=TRUE)
+    }
+    
+    
+    ds$BuyDurationMin = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "BuyDurationLow"]
+    ds$BuyDurationMax = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "BuyDurationHigh"]
+    ds$HoldDurationMin = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "HoldDurationLow"]
+    ds$HoldDurationMax = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "HoldDurationHigh"]
+    ds$BuyASWMin = ds$AvgASW * TH.Limits[TH.Limits$Indices==index, "BuyASWLow"]
+    ds$BuyASWMax = ds$AvgASW * TH.Limits[TH.Limits$Indices==index, "BuyASWHigh"]
+    ds$HoldASWMin = ds$AvgASW * TH.Limits[TH.Limits$Indices==index, "HoldASWLow"]
+    ds$HoldASWMax = ds$AvgASW * TH.Limits[TH.Limits$Indices==index, "HoldASWHigh"]
+    
+    return(indexopt(ds))
+}
+
+
+# this calc FinalMktWeight for DtS
+dts <- function(df) {
+    
+    df = df[order(-df$Qualify, -df$DtS),]
+    
+    Multiple = OutPerformMultiple-1
+    PercentileHold = ConstructModelPortDtSPHold
+    PercentileBuy = ConstructModelPortDtSPBuy
+    df$DtSPHold = quantile(df$DtS, PercentileHold)
+    df$DtSPBuy = quantile(df$DtS, PercentileBuy)
+    df$DtSPHoldDiff = abs(df$DtS - df$DtSPHold)
+    df$DtSPBuyDiff = abs(df$DtS - df$DtSPBuy)
+    row = df[1,]
+    Opinion = row$M.OP
+    NumOfBonds = row$NumOfBonds
+    NumQualify = row$NumQualify
+    TotalTicker = row$TotalTicker
+    
+    if (Opinion ==1)
+    {
+        # find the one that's qualified and closest to PHold and use it
+        df = df[order(-df$Qualify, df$DtSPHoldDiff),]
+        row = df[1,]
+        EfficientDtS = row$EfficientDtS
+        row$FinalMktWeight = ifelse(EfficientDtS==0,0,TotalTicker/EfficientDtS)
+        
+        # find the one that's qualified and closest to PBuy and use it
+        df = df[order(-df$Qualify, df$DtSPBuyDiff),]
+        row = df[1,]
+        EfficientDtS = row$EfficientDtS
+        row$FinalMktWeight = ifelse(EfficientDtS==0,0,row$FinalMktWeight + Multiple*TotalTicker/EfficientDtS)
+    } else
+    {
+        # find the one that's qualified and closest to PHold and use it
+        df = df[order(-df$Qualify, df$DtSPHoldDiff),]
+        row = df[1,]
+        EfficientDtS = row$EfficientDtS
+        row$FinalMktWeight = ifelse(EfficientDtS==0,0,TotalTicker/EfficientDtS)
+    }
+    
+    
+    return(df)
+    
+}
+
+# this function limits weight by index month
+limitWeight <- function(df) {
+    # 1) group by Ticker, calculate sum of ReWeighted2
+    # 2) if any ticker with sum of ReWeighted2 > MaxWeightPerName, set it to MaxLimit, 
+    #   distribute by CUSIP within that ticker, otherwise DONE
+    # 3) re-weight the whole population to 100
+    # 4) repeat from 1)
+    continue = TRUE
+    count = 0
+    while (continue) {
+        
+        df$TickerWeight = ave(df$ReWeighted2, df$Ticker, FUN=sum)
+        if (nrow(df[which(df$TickerWeight>MaxWeightPerName),])>0) {
+            df$ReWeighted2[df$TickerWeight>MaxWeightPerName] = 
+                df$ReWeighted2[df$TickerWeight>MaxWeightPerName] / df$TickerWeight[df$TickerWeight>MaxWeightPerName] * MaxLimit
+            df$ReWeighted2 = df$ReWeighted2 * 100 / sum(df$ReWeighted2)
+        } else {
+            continue = FALSE
+        }
+        count = count + 1
+        if (count>10) continue = FALSE
+    }
+    
+    return (df)
+}
+
+
 
 processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     
@@ -7,8 +745,6 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     ConstructModelPort = CMP
     # 1 = MV%, 2 = DtS, 3 = DtS Cash
     ConstructModelPortMethod = CMPM
-    CH = CH
-    CH_OpinionDate = CH_OpinionDate
 
     DEBUG = FALSE
     
@@ -23,698 +759,6 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         TH.MA = 6
     }
     
-    library(dplyr)
-    library(stringr)
-    library(mondate)
-    library(DataCombine)
-    library(data.table)
-    library(openxlsx)
-    library(TTR)
-    
-    ########## initialize variables ##########
-    final = data.frame(matrix(ncol=0,nrow=0))
-    params = read.csv("parameters.csv")
-    TH.Limits = read.csv("indices.csv")
-    TH.Limits = subset(TH.Limits, TH.Limits$Include==1)
-    Indices = as.vector(TH.Limits$Indices)
-    #RootFolder = as.character(as.vector(params$value[params$name=="RootFolder"]))
-    
-    
-    ########## define parameters ##########
-    CS.MaxRange.Q = as.numeric(as.vector(params$value[params$name=="CS.MaxRange.Q"]))
-    CS.MaxRange.SA = as.numeric(as.vector(params$value[params$name=="CS.MaxRange.SA"]))
-    CS.AdjEntryDate.123Q = as.numeric(as.vector(params$value[params$name=="CS.AdjEntryDate.123Q"]))
-    CS.AdjEntryDate.1S = as.numeric(as.vector(params$value[params$name=="CS.AdjEntryDate.1S"]))
-    CS.AdjEntryDate.4Q = as.numeric(as.vector(params$value[params$name=="CS.AdjEntryDate.4Q"]))
-    CS.AdjEntryDate.2S = as.numeric(as.vector(params$value[params$name=="CS.AdjEntryDate.2S"]))
-    CS.Opinion.NA = as.numeric(as.vector(params$value[params$name=="CS.Opinion.NA"]))
-    CS.TableOption = as.numeric(as.vector(params$value[params$name=="CS.TableOption"]))
-    
-    BuyM.RatioCutOff = as.numeric(as.vector(params$value[params$name=="BuyM.RatioCutOff"]))
-    HoldM.RatioCutOff = as.numeric(as.vector(params$value[params$name=="HoldM.RatioCutOff"]))
-    ConstructModelPortDtSPHold = as.numeric(as.vector(params$value[params$name=="ConstructModelPortDtSPHold"]))
-    ConstructModelPortDtSPBuy = as.numeric(as.vector(params$value[params$name=="ConstructModelPortDtSPBuy"]))
-    
-    TScoreHoldFilter = as.numeric(as.vector(params$value[params$name=="TScoreHoldFilter"]))
-    TScoreBuyFilter = as.numeric(as.vector(params$value[params$name=="TScoreBuyFilter"]))
-    TScoreCutOff = as.numeric(as.vector(params$value[params$name=="TScoreCutOff"]))
-    TScoreNA = as.numeric(as.vector(params$value[params$name=="TScoreNA"]))
-    OutPerformMultiple = as.numeric(as.vector(params$value[params$name=="OutPerformMultiple"]))
-    MaxWeightPerName = as.integer(as.vector(params$value[params$name=="MaxWeightPerName"]))
-    MaxLimit = MaxWeightPerName - 0.05
-    
-    IndexDataFolder = as.character(as.vector(params$value[params$name=="IndexDataFolder"]))
-    CompanyScoreFolder = as.character(as.vector(params$value[params$name=="CompanyScoreFolder"]))
-    Ind_Lvl1 = as.character(as.vector(params$value[params$name=="Ind_Lvl1"]))
-    Ind_Lvl2 = as.character(as.vector(params$value[params$name=="Ind_Lvl2"]))
-    Ind_Lvl3 = as.character(as.vector(params$value[params$name=="Ind_Lvl3"]))
-    Ind_Lvl4 = as.character(as.vector(params$value[params$name=="Ind_Lvl4"]))
-    
-    TH.MinWght = as.numeric(as.vector(params$value[params$name=="TH.MinWght"]))
-    TH.MA = as.numeric(as.vector(params$value[params$name=="TH.MA"]))
-    
-    ########## define functions ##########
-    monthStart <- function(x) {
-        x <- as.POSIXlt(x)
-        x$mday <- 1
-        as.Date(x)
-    }
-    
-    scoreToOp1 <- function(rf, na0, na1, na2, t0, t1, t2) {
-        ifelse(rf=="Q",
-               ifelse(na0>CS.Opinion.NA,-3,
-                      ifelse(t0>=9,1,
-                             ifelse(t0==8 & (na1<=CS.Opinion.NA & t1>=9),1,
-                                    ifelse(t0==8 & (na1<=CS.Opinion.NA & t1==8) & (na2<=CS.Opinion.NA & t2>=8),1, 
-                                           ifelse(t0<=3,-1,
-                                                  ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4) & (na2<=CS.Opinion.NA & t2<=4),-1,
-                                                         ifelse(t0>=7 & (na1<=CS.Opinion.NA & t1>=7),0,-2))))))),
-               ifelse(na0>CS.Opinion.NA,-3,
-                      ifelse(t0>=9,1,
-                             ifelse(t0==8 & (na1<=CS.Opinion.NA & t1>=8),1,
-                                    ifelse(t0<=3,-1,
-                                           ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4),-1,
-                                                  ifelse(t0>=7,0,-2))))))
-        )
-        
-    }
-    
-    scoreToOp2 <- function(rf, na0, na1, na2, t0, t1, t2) {
-        ifelse(rf=="Q",
-               ifelse(na0>CS.Opinion.NA,-2,
-                      ifelse(t0>=9,0,
-                             ifelse(t0==8 & (na1<=CS.Opinion.NA & t1>=9),0,
-                                    ifelse(t0==8 & (na1<=CS.Opinion.NA & t1==8) & (na2<=CS.Opinion.NA & t2>=8),0, 
-                                           ifelse(t0<=3,-1,
-                                                  ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4) & (na2<=CS.Opinion.NA & t2<=4),-1,
-                                                         ifelse(t0>=7 & (na1<=CS.Opinion.NA & t1>=7),0,NA))))))),
-               ifelse(na0>CS.Opinion.NA,-2,
-                      ifelse(t0>=9,0,
-                             ifelse(t0==8 & (na1<=CS.Opinion.NA & t1>=8),0,
-                                    ifelse(t0<=3,-1,
-                                           ifelse(t0==4 & (na1<=CS.Opinion.NA & t1<=4),-1,
-                                                  ifelse(t0>=7,0,NA))))))
-        )
-    }
-    
-    # this function convert score to opinion by company
-    scoreToOp <- function(df) {
-        df = df[order(df$AdjDate),]
-        df$M.OP1 = scoreToOp1(df$RF, df$M.NA, df$T1.M.NA, df$T2.M.NA, df$M.SCORE, df$T1.M.SCORE, df$T2.M.SCORE)
-        df$M.OP2 = scoreToOp2(df$RF, df$M.NA, df$T1.M.NA, df$T2.M.NA, df$M.SCORE, df$T1.M.SCORE, df$T2.M.SCORE)
-        df = FillDown(df, 'M.OP2')
-        df$M.OP2[is.na(df$M.OP2)] = -2
-        df$M.OP = ifelse(df$M.OP1==-3|df$M.OP1==-1|df$M.OP1==0|df$M.OP1==1, df$M.OP1, df$M.OP2)    
-        return (df)
-    }
-    
-    # this function returns index monthly file
-    indexmonthlydata <- function(index) {
-        file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "Monthly", sep=""),
-                                pattern='*.csv',
-                                full.names=TRUE)
-        df <- lapply(file.list, read.csv, skip=3, sep=";")
-        df <- do.call("rbind", df)
-        df=subset(df, df$Index.Name==index)
-        df$As.of.Date=as.Date(df$As.of.Date, "%m/%d/%Y")
-        df$Maturity.Date=as.Date(df$Maturity.Date, "%m/%d/%Y")
-        colnames(df)[6] = "Bond.Name"
-        # remove unused columns
-        df = df[, !(colnames(df) %in% c("Description", "X"))]    
-        return(df)
-    }
-    #test = indexmonthlydata("HPID")
-    
-    # this function returns index file
-    indexdata <- function(index) {
-        file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "BOFA ", index, " index history", sep=""),
-                                pattern='*.xlsx',
-                                full.names=TRUE)
-        df <- lapply(file.list, read.xlsx)
-        df <- do.call("rbind", df)
-        df$As.of.Date=as.Date(as.character(df$As.of.Date), "%Y%m%d")
-        # converting from excel date to R
-        # surpress warning
-        #options(warn = -1)
-        df$Maturity.Date=suppressWarnings(as.Date(as.numeric(df$Maturity.Date), origin="1899-12-30"))
-        #options(warn = 0)
-        
-        colnames(df)[6] = "Bond.Name"
-        # remove unused columns
-        df = df[, !(colnames(df) %in% c("Description"))]
-        # rename columns
-        names(df)[names(df) == "Mkt.%.Index.Wght"] = "Mkt...Index.Wght"
-        names(df)[names(df) == "PrevMend.Mkt.%.Index.Wght"] = "PrevMend.Mkt...Index.Wght"
-        names(df)[names(df) == "TRR.%.MTD.LOC"] = "TRR...MTD.LOC"
-        names(df)[names(df) == "Excess.Rtn.%.MTD"] = "Excess.Rtn...MTD"
-        
-        # add monthly files    
-        df=rbind(df, indexmonthlydata(index))   
-        df=subset(df, df$Ticker!="CASH")
-        df$PK=paste(df$Index.Name, df$Cusip, df$As.of.Date, sep="")
-        # remove duplicate PK
-        df = df %>% distinct(PK, .keep_all = TRUE)    
-        df$PrevMend.Mod.Dur.To.Worst[is.na(df$PrevMend.Mod.Dur.To.Worst)]=0
-        df$PrevMend.AssetSwp[is.na(df$PrevMend.AssetSwp)]=0
-        if (Ind_Lvl1!="ALL") df = subset(df, df$ML.Industry.Lvl.1==Ind_Lvl1)
-        if (Ind_Lvl2!="ALL") df = subset(df, df$ML.Industry.Lvl.2==Ind_Lvl2)
-        if (Ind_Lvl3!="ALL") df = subset(df, df$ML.Industry.Lvl.3==Ind_Lvl3)
-        if (Ind_Lvl4!="ALL") df = subset(df, df$ML.Industry.Lvl.4==Ind_Lvl4)
-        return(df)
-    }
-    #test2 = indexdata("HPID")
-    
-    # this function returns current holdings file
-    ch_data <- function(index) {
-        file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "CurrentHoldings", sep=""),
-                                pattern='*.csv',
-                                full.names=TRUE)
-        if (length(file.list) >0) {
-            # if projected file exist
-            df <- lapply(file.list, read.csv, skip=3, sep=";")
-            df <- do.call("rbind", df)
-            df=subset(df, df$Index.Name==index)
-            df$As.of.Date=as.Date(df$As.of.Date, "%m/%d/%Y")
-            df$Maturity.Date=as.Date(df$Maturity.Date, "%m/%d/%Y")
-            colnames(df)[6] = "Bond.Name"
-            # remove unused columns
-            df = df[, !(colnames(df) %in% c("Description", "X"))]    
-            df=subset(df, df$Ticker!="CASH")
-            df$PK=paste(df$Index.Name, df$Cusip, df$As.of.Date, sep="")
-            # remove duplicate PK
-            df = df %>% distinct(PK, .keep_all = TRUE)    
-            df$PrevMend.Mod.Dur.To.Worst[is.na(df$PrevMend.Mod.Dur.To.Worst)]=0
-            df$PrevMend.AssetSwp[is.na(df$PrevMend.AssetSwp)]=0
-            if (Ind_Lvl1!="ALL") df = subset(df, df$ML.Industry.Lvl.1==Ind_Lvl1)
-            if (Ind_Lvl2!="ALL") df = subset(df, df$ML.Industry.Lvl.2==Ind_Lvl2)
-            if (Ind_Lvl3!="ALL") df = subset(df, df$ML.Industry.Lvl.3==Ind_Lvl3)
-            if (Ind_Lvl4!="ALL") df = subset(df, df$ML.Industry.Lvl.4==Ind_Lvl4)
-            
-            # add X more month from regular index file
-            df2 = indexdata(index)
-            # get rid of the monthly file that is later than the project file
-            df2 = subset(df2, df2$As.of.Date<max(df$As.of.Date))
-            #print(nrow(df2))
-            df2 = subset(df2, df2$As.of.Date<=max(df2$As.of.Date) & df2$As.of.Date>=as.Date(as.mondate(max(df2$As.of.Date))-TH.MA+1))
-            df = rbind(df, df2)
-        } else {
-            # if projected file doesn't exist, return X most recent months
-            df = indexdata(index)
-            #print(nrow(df))
-            df = subset(df, df$As.of.Date<=max(df$As.of.Date) & df$As.of.Date>=as.Date(as.mondate(max(df$As.of.Date))-TH.MA))
-        }
-        
-        # rename columns here
-        setnames(df, old=c("PrevMend.AssetSwp", "Asset.Swap", "PrevMend.Mod.Dur.To.Worst", "Semi.Mod.Dur.To.Worst", "PrevMend.Mkt...Index.Wght", "Mkt...Index.Wght"), 
-                 new=c("Asset.Swap", "PrevMend.AssetSwp", "Semi.Mod.Dur.To.Worst", "PrevMend.Mod.Dur.To.Worst", "Mkt...Index.Wght", "PrevMend.Mkt...Index.Wght"))
-        
-        return(df)
-    }
-    #test3 = ch_data("HPID")
-    
-    # this function loads translation template
-    loadtrans <- function() {
-        
-        ########## load translation file ##########
-        trans = read.xlsx(xlsxFile=paste(RootFolder, "Translation template.xlsx", sep = ""),
-                          sheet = "Bond translation",
-                          startRow = 14,
-                          detectDates = TRUE,
-                          na.strings = c(""),
-                          cols = c(1,5,17,18))
-        trans = subset(trans, is.na(trans$Bond.Ticker)==FALSE)
-        trans = subset(trans, trimws(trans$Bond.Ticker)!="")
-        # remove duplicated date + ticker
-        trans = trans %>% distinct(FROM.DATE.LINK,Bond.Ticker, .keep_all = TRUE)
-        trans = trans[order(trans$Bond.Ticker, trans$FROM.DATE.LINK),]
-        trans$index = seq.int(nrow(trans))-1
-        trans$index1 = trans$index + 1
-        trans$index = paste(trans$Bond.Ticker, trans$index)
-        trans$index1 = paste(trans$Bond.Ticker, trans$index1)
-        trans = merge(trans, trans[ , c("index","FROM.DATE.LINK")],
-                      by.x="index1", by.y="index", all.x=TRUE)
-        names(trans)[names(trans) == "FROM.DATE.LINK.x"] = "FROM.DATE.LINK"
-        names(trans)[names(trans) == "FROM.DATE.LINK.y"] = "TO.DATE.LINK"
-        trans$TO.DATE.LINK = ifelse(is.na(trans$TO.DATE.LINK), "2020-01-01", trans$TO.DATE.LINK)
-        # convert TO.DATE.LINK back to date type
-        trans$TO.DATE.LINK =as.Date(trans$TO.DATE.LINK, "%Y-%m-%d")
-        # convert FROM.DATE.LINK back to date type
-        trans$FROM.DATE.LINK =as.Date(trans$FROM.DATE.LINK, "%Y-%m-%d")
-        trans$ID_BB_UNIQUE = gsub("EQ", "", trans$ID_BB_UNIQUE)
-        trans = transform(trans, ID_BB_UNIQUE = as.numeric(ID_BB_UNIQUE))
-        
-        return (trans)
-    }
-    
-    # this function turns scores into opinions
-    scores2opinions <- function() {
-        
-        ########## scores to opinions ##########
-        transRF = trans[, c("ID_BB_UNIQUE","REPORTING_FREQUENCY")]
-        transRF = subset(transRF, is.na(transRF$REPORTING_FREQUENCY)==FALSE)
-        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="")
-        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="A")
-        transRF = subset(transRF, trimws(transRF$REPORTING_FREQUENCY)!="0")
-        # remove duplicated date + ticker
-        transRF = transRF %>% distinct(ID_BB_UNIQUE,REPORTING_FREQUENCY, .keep_all = TRUE)
-        
-        scores = read.csv(paste(RootFolder, CompanyScoreFolder, "BondsScoresBackT.csv", sep = ""))
-        scores = subset(scores, trimws(scores$BBERG_ID)!="")
-        scores = subset(scores, nchar(as.character(scores$COMPANY_QUARTER))==6)
-        scores = subset(scores, scores$TABLES!="RS")
-        names(scores)[names(scores) == "MOMENTUM_11"] = "M.FORMULA_11"
-        scores = scores[ ,c("BBERG_ID","TABLES","COMPANY_QUARTER","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","DT_ENTRY","DATE")]
-        scores$BBERG_ID = gsub("EQ", "", scores$BBERG_ID)
-        scores = transform(scores, BBERG_ID = as.numeric(BBERG_ID))
-        
-        scores$DATE = as.Date(scores$DATE, "%b %d %Y")
-        scores$DT_ENTRY = as.Date(scores$DT_ENTRY, "%b %d %Y")
-        scores$COMPANY_QUARTER = substr(scores$COMPANY_QUARTER,1,2)
-        scores$AdjDate = ifelse(scores$COMPANY_QUARTER=="4Q",scores$DATE+CS.AdjEntryDate.4Q,
-                                ifelse(scores$COMPANY_QUARTER=="1S",scores$DATE+CS.AdjEntryDate.1S,
-                                       ifelse(scores$COMPANY_QUARTER=="2S",scores$DATE+CS.AdjEntryDate.2S,
-                                              scores$DATE+CS.AdjEntryDate.123Q)))
-        scores$AdjDate = ifelse(scores$DT_ENTRY>scores$AdjDate,scores$AdjDate,scores$DT_ENTRY)
-        scores$AdjDate =as.Date(scores$AdjDate, origin="1970-01-01")
-        
-        scores = merge(scores, transRF, by.x="BBERG_ID", by.y="ID_BB_UNIQUE")
-        if (CS.TableOption==1) {
-            scores$FilterByTable = ifelse(scores$TABLES=="OR" & grepl("M", scores$REPORTING_FREQUENCY),1,
-                                          ifelse(scores$TABLES=="MR" & !grepl("M", scores$REPORTING_FREQUENCY),1,0))
-        } else if  (CS.TableOption==2) {
-            scores$FilterByTable = ifelse(scores$TABLES=="OR",1,0)
-        } else if  (CS.TableOption==3) {
-            scores$FilterByTable = ifelse(scores$TABLES=="MR",1,0)    
-        } else {
-            scores$FilterByTable = 1
-        }
-        scores = subset(scores, scores$FilterByTable==1)
-        scores$RF = ifelse(grepl("Q", scores$REPORTING_FREQUENCY), "Q", "SA")
-        scores = scores[, !(colnames(scores) %in% c("DT_ENTRY","DATE","FilterByTable","COMPANY_QUARTER","REPORTING_FREQUENCY"))]
-        scores = scores[order(scores$BBERG_ID, scores$AdjDate),]
-        scores$index = seq.int(nrow(scores))-1
-        scores$index1 = scores$index + 1
-        scores$index2 = scores$index + 2
-        scores$index = paste(scores$BBERG_ID, "#", scores$index)
-        scores$index1 = paste(scores$BBERG_ID, "#", scores$index1)
-        scores$index2 = paste(scores$BBERG_ID, "#", scores$index2)
-        scores = merge(scores, scores[ , c("index1","M.SCORE", "M.NA")],
-                       by.x="index", by.y="index1", all.x=TRUE)
-        names(scores)[names(scores) == "M.SCORE.x"] = "M.SCORE"
-        names(scores)[names(scores) == "M.NA.x"] = "M.NA"
-        names(scores)[names(scores) == "M.SCORE.y"] = "T1.M.SCORE"
-        names(scores)[names(scores) == "M.NA.y"] = "T1.M.NA"
-        scores = merge(scores, scores[ , c("index2","M.SCORE", "M.NA")],
-                       by.x="index", by.y="index2", all.x=TRUE)
-        names(scores)[names(scores) == "M.SCORE.x"] = "M.SCORE"
-        names(scores)[names(scores) == "M.NA.x"] = "M.NA"
-        names(scores)[names(scores) == "M.SCORE.y"] = "T2.M.SCORE"
-        names(scores)[names(scores) == "M.NA.y"] = "T2.M.NA"
-        
-        scores$T1.M.SCORE[is.na(scores$T1.M.SCORE)] = -1
-        scores$T2.M.SCORE[is.na(scores$T2.M.SCORE)] = -1
-        scores$T1.M.NA[is.na(scores$T1.M.NA)] = 99
-        scores$T2.M.NA[is.na(scores$T2.M.NA)] = 99
-        
-        # next group data by BBERG_ID and loop thru each BBERG_ID to determine M.OP
-        companies = scores %>% split(f=scores$BBERG_ID)
-        companies = lapply(companies, scoreToOp)
-        opinions = do.call(rbind,companies)
-        
-        opinions = opinions[, !(colnames(opinions) %in% c("RF","index","index1","index2","T1.M.SCORE","T2.M.SCORE","T1.M.NA","T2.M.NA","M.OP1","M.OP2"))]
-        return(opinions)
-    }    
-    
-    
-    # this function returns index file after joining scores
-    indexop <- function(index, ds) {
-        
-        # joining index file to translation file
-        ds2 = ds[, c("Ticker","As.of.Date","PK")]
-        ds2 = merge(ds2, trans[ , c("Bond.Ticker","FROM.DATE.LINK","TO.DATE.LINK","ID_BB_UNIQUE","REPORTING_FREQUENCY")], 
-                    by.x="Ticker", by.y="Bond.Ticker", all.x=TRUE)
-        ds2 = subset(ds2, ds2$As.of.Date>=ds2$FROM.DATE.LINK 
-                     & ds2$As.of.Date<ds2$TO.DATE.LINK)
-        ds2 = ds2[, !(colnames(ds2) %in% c("FROM.DATE.LINK","TO.DATE.LINK"))]
-        if (CH) {
-            # special handling for CH, looking back from the last "As.of.Date"
-            ds2$FROM.DATE.LINK = ifelse(grepl("Q", ds2$REPORTING_FREQUENCY), 
-                                        max(ds2$As.of.Date)+CS.MaxRange.Q,
-                                        max(ds2$As.of.Date)+CS.MaxRange.SA)
-        } else {
-            ds2$FROM.DATE.LINK = ifelse(grepl("Q", ds2$REPORTING_FREQUENCY), 
-                                        ds2$As.of.Date+CS.MaxRange.Q,
-                                        ds2$As.of.Date+CS.MaxRange.SA)
-        }
-        # convert FROM.DATE.LINK back to date type
-        ds2$FROM.DATE.LINK =as.Date(ds2$FROM.DATE.LINK, origin="1970-01-01")
-        ds2$TO.DATE.LINK = monthStart(ds2$As.of.Date)
-        if (CH) {
-            # special handling for CH, the last "As.of.Date" to use user set opinion date
-            ds2$TO.DATE.LINK[ds2$As.of.Date==max(ds2$As.of.Date)] = CH_OpinionDate
-        }
-        
-        # get rid of columns no longer needed
-        ds2 = ds2[, !(colnames(ds2) %in% c("Ticker","As.of.Date"))]
-        
-        ###### longest running merge #######
-        # joining index file to company scores (unequal join using data.table object)
-        scores$AdjDate2 = scores$AdjDate
-        ds2=setDT(ds2)[setDT(scores), on=.(ID_BB_UNIQUE=BBERG_ID, FROM.DATE.LINK<=AdjDate2, TO.DATE.LINK>AdjDate2),nomatch=0,allow.cartesian=TRUE]
-        # convert data.table back to data.frame    
-        ds2=as.data.frame(ds2)
-        ds2 = ds2[, !(colnames(ds2) %in% c("FROM.DATE.LINK","TO.DATE.LINK"))]
-        # keep only the top 1 AdjDate for each PK
-        ds2 = ds2[order(ds2$PK, ds2$AdjDate),]
-        ds2 = ds2 %>% dplyr::mutate(rn = row_number()) %>% group_by(PK) %>% top_n(1, rn)
-        # reformat Company ID back to its original format
-        ds2$ID_BB_UNIQUE = paste("EQ", str_pad(ds2$ID_BB_UNIQUE, 16, pad = "0"), sep = "")
-        
-        # final join
-        ds = merge(ds, ds2, by.x="PK", by.y="PK", all.x=TRUE)
-        # destroy ds2
-        rm(ds2)
-        gc()
-        
-        # clean up M.OP and determine C.OP
-        ds$M.OP = ifelse(is.na(ds$M.OP),-4,ds$M.OP)
-        # special handling for CurrentHoldings (limited financials)
-        # if the last opinion is -3, and 2nd to last opinion is 1, 0 or -2, copy the score data
-        if (CH) {
-            # ds3 = except for the last month
-            ds3 = subset(ds, ds$As.of.Date < max(ds$As.of.Date))
-            # ds1 = last month
-            ds1 = subset(ds, ds$As.of.Date == max(ds$As.of.Date))
-            # ds2 = 2nd to last month
-            ds2 = subset(ds3[,c("Cusip","M.OP","M.SCORE","M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11")], ds3$As.of.Date == max(ds3$As.of.Date))
-            ds = merge(ds1, ds2, by.x="Cusip", by.y="Cusip", all.x=TRUE)
-            ds$M.OP = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
-                             ds$M.OP.y, ds$M.OP.x)
-            ds$M.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2),
-                                ds$M.SCORE.y, ds$M.SCORE.x)
-            ds$M.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
-                             ds$M.NA.y, ds$M.NA.x)
-            ds$T.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
-                                ds$T.SCORE.y, ds$T.SCORE.x)
-            ds$T.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
-                             ds$T.NA.y, ds$T.NA.x)
-            ds$L.SCORE = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
-                                ds$L.SCORE.y, ds$L.SCORE.x)
-            ds$L.NA = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
-                             ds$L.NA.y, ds$L.NA.x)
-            ds$M.FORMULA_11 = ifelse(ds$M.OP.x==-3 & !is.na(ds$M.OP.y) & (ds$M.OP.y==1 | ds$M.OP.y==0 | ds$M.OP.y==-2 | ds$M.OP.y==-1),
-                                     ds$M.FORMULA_11.y, ds$M.FORMULA_11.x)
-            
-            ds = ds[, !(colnames(ds) %in% c("M.OP.x","M.SCORE.x","M.NA.x","T.SCORE.x","T.NA.x","L.SCORE.x","L.NA.x","M.FORMULA_11.x",
-                                            "M.OP.y","M.SCORE.y","M.NA.y","T.SCORE.y","T.NA.y","L.SCORE.y","L.NA.y","M.FORMULA_11.y"))]
-            ds = rbind(ds, ds3)
-        }
-        ds$C.OP = ifelse(ds$M.OP==-4 | ds$M.OP==-3 | ds$M.OP==-1,ds$M.OP,
-                         ifelse((ds$M.OP==-2 | ds$M.OP==-0) & ds$M.FORMULA_11>=HoldM.RatioCutOff,ds$M.OP,
-                                ifelse(ds$M.OP==1 & ds$M.FORMULA_11>=BuyM.RatioCutOff,ds$M.OP,-1)))
-        
-        return(ds)
-    }
-    
-    # this function returns threshold file
-    indexopt <- function(df) {
-        df = df[order(df$Index,df$Date),]
-        indexmonths = split(df, paste(df$Index, df$Date))
-        
-        MinWght = TH.MinWght
-        
-        DurationCutOff = 0
-        DurationMax = 20
-        ASWCutOff = 0
-        ASWMax = 10000
-        DurationStep = 0.05
-        ASWStep = 10
-        
-        
-        thresholds <- data.frame(matrix(ncol = 21, nrow = 0))
-        colnames(thresholds) = c("Index", "Date", 
-               "BuyDurationCutOff", "BuyDurationMax", "BuyASWCutOff", "BuyASWMax",
-               "HoldDurationCutOff", "HoldDurationMax", "HoldASWCutOff", "HoldASWMax", 
-               "obsindex", "obsbuy", "obshold",
-               "IndexDuration", "IndexASW", "PortDuration", "PortASW",
-               "BuyDuration", "BuyASW", "HoldDuration", "HoldASW")
-
-        PrevHoldDurationCutOff = DurationCutOff
-        PrevBuyDurationCutOff = DurationCutOff
-        PrevHoldDurationMax = DurationMax
-        PrevBuyDurationMax = DurationMax
-        PrevHoldASWCutOff = ASWCutOff
-        PrevBuyASWCutOff = ASWCutOff
-        PrevHoldASWMax = ASWMax
-        PrevBuyASWMax = ASWMax
-        
-        
-        for (i in 1:length(indexmonths)){
-            im = indexmonths[[i]]
-            HoldDurationCutOff = DurationCutOff
-            BuyDurationCutOff = DurationCutOff
-            HoldDurationMax = DurationMax
-            BuyDurationMax = DurationMax
-            HoldASWCutOff = ASWCutOff
-            BuyASWCutOff = ASWCutOff
-            HoldASWMax = ASWMax
-            BuyASWMax = ASWMax
-            
-            
-            # Hold
-            continue = TRUE
-            solution = FALSE
-            while (continue) {
-                im$OP = ifelse(im$C.OP==1 & im$ASW>=BuyASWCutOff & im$ASW<=BuyASWMax
-                               & im$Duration>=BuyDurationCutOff & im$Duration<=BuyDurationMax,1,
-                               ifelse((im$C.OP==0 | im$C.OP==-2) & im$ASW>=HoldASWCutOff & im$ASW<=HoldASWMax
-                                      & im$Duration>=HoldDurationCutOff & im$Duration<=HoldDurationMax,0,-1))
-                im$PortWght = ifelse(im$OP==1, im$IndexWght*3, ifelse(im$OP==0, im$IndexWght,0))
-                curPortWght = sum(im$PortWght)
-                avgHoldDuration = weighted.mean(im$Duration[im$OP==0], im$IndexWght[im$OP==0])
-                avgHoldASW = weighted.mean(im$ASW[im$OP==0], im$IndexWght[im$OP==0])
-                if (is.nan(avgHoldDuration) | is.nan(avgHoldASW)) {
-                    continue = FALSE            
-                }
-                else if (curPortWght < MinWght) {
-                    continue = FALSE
-                }
-                else if (avgHoldDuration < im$HoldDurationMin[1]) {
-                    HoldDurationCutOff = HoldDurationCutOff + DurationStep
-                } else if (avgHoldDuration > im$HoldDurationMax[1]) {
-                    HoldDurationMax = HoldDurationMax - DurationStep
-                } else if (avgHoldASW < im$HoldASWMin[1]) {
-                    HoldASWCutOff = HoldASWCutOff + ASWStep
-                } else if (avgHoldASW > im$HoldASWMax[1]) {
-                    HoldASWMax = HoldASWMax - ASWStep
-                } else {
-                    solution = TRUE
-                    continue = FALSE
-                }
-                
-            }
-            
-            # Buy
-            continue = TRUE
-            solution = FALSE
-            while (continue) {
-                im$OP = ifelse(im$C.OP==1 & im$ASW>=BuyASWCutOff & im$ASW<=BuyASWMax
-                               & im$Duration>=BuyDurationCutOff & im$Duration<=BuyDurationMax,1,
-                               ifelse((im$C.OP==0 | im$C.OP==-2) & im$ASW>=HoldASWCutOff & im$ASW<=HoldASWMax
-                                      & im$Duration>=HoldDurationCutOff & im$Duration<=HoldDurationMax,0,-1))
-                im$PortWght = ifelse(im$OP==1, im$IndexWght*3, ifelse(im$OP==0, im$IndexWght,0))
-                curPortWght = sum(im$PortWght)
-                avgBuyDuration = weighted.mean(im$Duration[im$OP==1], im$IndexWght[im$OP==1])
-                avgBuyASW = weighted.mean(im$ASW[im$OP==1], im$IndexWght[im$OP==1])
-                if (is.nan(avgBuyDuration) | is.nan(avgBuyASW)) {
-                    continue = FALSE
-                }
-                else if (curPortWght < MinWght) {
-                    continue = FALSE
-                }
-                else if (avgBuyDuration < im$BuyDurationMin[1]) {
-                    BuyDurationCutOff = BuyDurationCutOff + DurationStep
-                } else if (avgBuyDuration > im$BuyDurationMax[1]) {
-                    BuyDurationMax = BuyDurationMax - DurationStep
-                } else if (avgBuyASW < im$BuyASWMin[1]) {
-                    BuyASWCutOff = BuyASWCutOff + ASWStep
-                } else if (avgBuyASW > im$BuyASWMax[1]) {
-                    BuyASWMax = BuyASWMax - ASWStep
-                } else {
-                    solution = TRUE
-                    continue = FALSE
-                }
-                
-            }
-            
-            
-            if (solution) {
-                # if solution found, save as prev month
-                PrevHoldDurationCutOff = HoldDurationCutOff
-                PrevBuyDurationCutOff = BuyDurationCutOff
-                PrevHoldDurationMax = HoldDurationMax
-                PrevBuyDurationMax = BuyDurationMax
-                PrevHoldASWCutOff = HoldASWCutOff
-                PrevBuyASWCutOff = BuyASWCutOff
-                PrevHoldASWMax = HoldASWMax
-                PrevBuyASWMax = BuyASWMax
-            } else {
-                # if solution not found, use prev month
-                HoldDurationCutOff = PrevHoldDurationCutOff
-                BuyDurationCutOff = PrevBuyDurationCutOff
-                HoldDurationMax = PrevHoldDurationMax
-                BuyDurationMax = PrevBuyDurationMax
-                HoldASWCutOff = PrevHoldASWCutOff
-                BuyASWCutOff = PrevBuyASWCutOff
-                HoldASWMax = PrevHoldASWMax
-                BuyASWMax = PrevBuyASWMax
-                im$OP = ifelse(im$C.OP==1 & im$ASW>=BuyASWCutOff & im$ASW<=BuyASWMax
-                               & im$Duration>=BuyDurationCutOff & im$Duration<=BuyDurationMax,1,
-                               ifelse((im$C.OP==0 | im$C.OP==-2) & im$ASW>=HoldASWCutOff & im$ASW<=HoldASWMax
-                                      & im$Duration>=HoldDurationCutOff & im$Duration<=HoldDurationMax,0,-1))
-            }
-            
-            obsindex = nrow(im)
-            obsbuy = nrow(im[im$OP==1,])
-            obshold = nrow(im[im$OP==0,])
-            im$PortWght = ifelse(im$OP==1, im$IndexWght*3, ifelse(im$OP==0, im$IndexWght,0))
-            IndexDuration = weighted.mean(im$Duration, im$IndexWght)
-            PortDuration = weighted.mean(im$Duration[im$PortWght>0], im$PortWght[im$PortWght>0])
-            BuyDuration = weighted.mean(im$Duration[im$OP==1], im$IndexWght[im$OP==1]) 
-            HoldDuration = weighted.mean(im$Duration[im$OP==0 | im$OP==-2], im$IndexWght[im$OP==0 | im$OP==-2]) 
-            IndexASW = weighted.mean(im$ASW, im$IndexWght)
-            PortASW = weighted.mean(im$ASW[im$PortWght>0], im$PortWght[im$PortWght>0])
-            BuyASW = weighted.mean(im$ASW[im$OP==1], im$IndexWght[im$OP==1]) 
-            HoldASW = weighted.mean(im$ASW[im$OP==0 | im$OP==-2], im$IndexWght[im$OP==0 | im$OP==-2]) 
-            
-            thresholds<-rbind(thresholds, data.frame(Index=im$Index[1],Date=im$Date[1],
-                                                     BuyDurationCutOff=BuyDurationCutOff, BuyDurationMax=BuyDurationMax,
-                                                     BuyASWCutOff=BuyASWCutOff, BuyASWMax=BuyASWMax,
-                                                     HoldDurationCutOff=HoldDurationCutOff, HoldDurationMax=HoldDurationMax,
-                                                     HoldASWCutOff=HoldASWCutOff, HoldASWMax=HoldASWMax,
-                                                     obsindex=obsindex,obsbuy=obsbuy,obshold=obshold,
-                                                     IndexDuration=IndexDuration,PortDuration=PortDuration,IndexASW=IndexASW,PortASW=PortASW,
-                                                     BuyDuration=BuyDuration,HoldDuration=HoldDuration,BuyASW=BuyASW,HoldASW=HoldASW))
-            
-        }
-        return (thresholds)
-    }
-    
-    # this function calc thresholds with optimization logic
-    indexth <- function(index, ds) {
-        ds$Date = as.character(ds$As.of.Date)
-        names(ds)[names(ds) == "Index.Name"] = "Index"
-        names(ds)[names(ds) == "PrevMend.Mkt...Index.Wght"] = "IndexWght"
-        names(ds)[names(ds) == "PrevMend.Mod.Dur.To.Worst"] = "Duration"
-        names(ds)[names(ds) == "PrevMend.AssetSwp"] = "ASW"
-        ds = ds[, c("Index", "Date", "IndexWght", "Duration", "ASW", "C.OP")]
-        ### try use moving average here ###
-        if (TH.MA==1) {
-            ds$AvgDuration = ave(ds$IndexWght/100*ds$Duration, ds$Date, FUN=sum)
-            ds$AvgASW = ave(ds$IndexWght/100*ds$ASW, ds$Date, FUN=sum)
-        } else {
-            ds_ma = group_by(ds,Index,Date) %>% 
-                summarize(AvgASWTemp = sum(IndexWght/100*ASW), AvgDurationTemp = sum(IndexWght/100*Duration))
-            ds_ma$AvgASW=runMean(ds_ma$AvgASWTemp, TH.MA)
-            ds_ma$AvgDuration=runMean(ds_ma$AvgDurationTemp, TH.MA)
-            for (i in (TH.MA-1):2) {
-                ds_ma$AvgASW[is.na(ds_ma$AvgASW)]=runMean(subset(ds_ma, is.na(ds_ma$AvgASW))$AvgASWTemp, i)
-                ds_ma$AvgDuration[is.na(ds_ma$AvgDuration)]=runMean(subset(ds_ma, is.na(ds_ma$AvgDuration))$AvgDurationTemp, i)
-            }
-            ds_ma$AvgASW[is.na(ds_ma$AvgASW)]=subset(ds_ma, is.na(ds_ma$AvgASW))$AvgASWTemp
-            ds_ma$AvgDuration[is.na(ds_ma$AvgDuration)]=subset(ds_ma, is.na(ds_ma$AvgDuration))$AvgDurationTemp
-            ds_ma = ds_ma[, c("Index", "Date", "AvgASW", "AvgDuration")]
-            ds = merge(ds, ds_ma, 
-                       by.x=c("Index", "Date"), by.y=c("Index", "Date"), all.x=TRUE)
-        }
-        
-        
-        ds$BuyDurationMin = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "BuyDurationLow"]
-        ds$BuyDurationMax = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "BuyDurationHigh"]
-        ds$HoldDurationMin = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "HoldDurationLow"]
-        ds$HoldDurationMax = ds$AvgDuration * TH.Limits[TH.Limits$Indices==index, "HoldDurationHigh"]
-        ds$BuyASWMin = ds$AvgASW * TH.Limits[TH.Limits$Indices==index, "BuyASWLow"]
-        ds$BuyASWMax = ds$AvgASW * TH.Limits[TH.Limits$Indices==index, "BuyASWHigh"]
-        ds$HoldASWMin = ds$AvgASW * TH.Limits[TH.Limits$Indices==index, "HoldASWLow"]
-        ds$HoldASWMax = ds$AvgASW * TH.Limits[TH.Limits$Indices==index, "HoldASWHigh"]
-        
-        return(indexopt(ds))
-    }
-    
-    
-    # this calc FinalMktWeight for DtS
-    dts <- function(df) {
-        
-        df = df[order(-df$Qualify, -df$DtS),]
-        
-        Multiple = OutPerformMultiple-1
-        PercentileHold = ConstructModelPortDtSPHold
-        PercentileBuy = ConstructModelPortDtSPBuy
-        df$DtSPHold = quantile(df$DtS, PercentileHold)
-        df$DtSPBuy = quantile(df$DtS, PercentileBuy)
-        df$DtSPHoldDiff = abs(df$DtS - df$DtSPHold)
-        df$DtSPBuyDiff = abs(df$DtS - df$DtSPBuy)
-        row = df[1,]
-        Opinion = row$M.OP
-        NumOfBonds = row$NumOfBonds
-        NumQualify = row$NumQualify
-        TotalTicker = row$TotalTicker
-        
-        if (Opinion ==1)
-        {
-            # find the one that's qualified and closest to PHold and use it
-            df = df[order(-df$Qualify, df$DtSPHoldDiff),]
-            row = df[1,]
-            EfficientDtS = row$EfficientDtS
-            row$FinalMktWeight = ifelse(EfficientDtS==0,0,TotalTicker/EfficientDtS)
-            
-            # find the one that's qualified and closest to PBuy and use it
-            df = df[order(-df$Qualify, df$DtSPBuyDiff),]
-            row = df[1,]
-            EfficientDtS = row$EfficientDtS
-            row$FinalMktWeight = ifelse(EfficientDtS==0,0,row$FinalMktWeight + Multiple*TotalTicker/EfficientDtS)
-        } else
-        {
-            # find the one that's qualified and closest to PHold and use it
-            df = df[order(-df$Qualify, df$DtSPHoldDiff),]
-            row = df[1,]
-            EfficientDtS = row$EfficientDtS
-            row$FinalMktWeight = ifelse(EfficientDtS==0,0,TotalTicker/EfficientDtS)
-        }
-        
-        
-        return(df)
-        
-    }
-
-    # this function limits weight by index month
-    limitWeight <- function(df) {
-        # 1) group by Ticker, calculate sum of ReWeighted2
-        # 2) if any ticker with sum of ReWeighted2 > MaxWeightPerName, set it to MaxLimit, 
-        #   distribute by CUSIP within that ticker, otherwise DONE
-        # 3) re-weight the whole population to 100
-        # 4) repeat from 1)
-        continue = TRUE
-        count = 0
-        while (continue) {
-            
-            df$TickerWeight = ave(df$ReWeighted2, df$Ticker, FUN=sum)
-            if (nrow(df[which(df$TickerWeight>MaxWeightPerName),])>0) {
-                df$ReWeighted2[df$TickerWeight>MaxWeightPerName] = 
-                    df$ReWeighted2[df$TickerWeight>MaxWeightPerName] / df$TickerWeight[df$TickerWeight>MaxWeightPerName] * MaxLimit
-                df$ReWeighted2 = df$ReWeighted2 * 100 / sum(df$ReWeighted2)
-            } else {
-                continue = FALSE
-            }
-            count = count + 1
-            if (count>10) continue = FALSE
-        }
-        
-        return (df)
-    }
-    
-    
-    
     ############################################################################################################
     ##########################   MAIN CODE STARTS HERE!!!   ####################################################
     ############################################################################################################
@@ -722,26 +766,28 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     status_msg = ""
     status_obj = ifelse(CH,"CH_status","status")
     start_time = Sys.time()
+    final = data.frame(matrix(ncol=0,nrow=0))
     
     tryCatch({
+        init_var()
         
         ########## load translation and company scores files ##########
         status_msg = "loading translation file..."
         session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
-        trans = loadtrans()
+        trans <<- loadtrans(RootFolder)
         
         status_msg = "calculating company opinions..."
         session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
         if (CS.UseFile) {
-            scores = read.csv(paste(RootFolder, "CompanyScoresBondCalc.csv", sep = ""))
-            scores = scores[ , c("BBERG_ID","TABLES","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","AdjDate","M.OP")]
+            scores <<- read.csv(paste(RootFolder, "CompanyScoresBondCalc.csv", sep = ""))
+            scores <<- scores[ , c("BBERG_ID","TABLES","M.SCORE", "M.NA","T.SCORE","T.NA","L.SCORE","L.NA","M.FORMULA_11","AdjDate","M.OP")]
             if (grepl("-", scores$AdjDate[1]))
-                scores$AdjDate = as.Date(scores$AdjDate, "%Y-%m-%d")
+                scores$AdjDate <<- as.Date(scores$AdjDate, "%Y-%m-%d")
             else
-                scores$AdjDate = as.Date(scores$AdjDate, "%m/%d/%Y")
+                scores$AdjDate <<- as.Date(scores$AdjDate, "%m/%d/%Y")
             
         } else {
-            scores = scores2opinions()
+            scores <<- scores2opinions(RootFolder)
             write.table(scores, file = paste(RootFolder, "CompanyScoresBondCalc.csv", sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
         }
         
@@ -750,17 +796,16 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             if (DEBUG) {
                 j = 1
             }
-            
+            StartFrom = TH.Limits[TH.Limits$Indices==Indices[j], "StartFrom"]
             status_msg = paste("merging", Indices[j], "data with company opinions...")
             session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
 
             if (CH) {
-                ds = ch_data(Indices[j])
+                ds = ch_data(Indices[j], RootFolder, IndexDataFolder, StartFrom)
             } else {
-                ds = indexdata(Indices[j])
+                ds = indexdata(Indices[j], RootFolder, IndexDataFolder, StartFrom)
             }
-            #ds$As.of.Date = as.Date(ds$As.of.Date, "%m/%d/%Y")
-            ds = indexop(Indices[j], ds)
+            ds = indexop(Indices[j], ds, CH, CH_OpinionDate)
             
             # calculate thresholds
             status_msg = paste("calculating", Indices[j], "thresholds...")
@@ -1019,9 +1064,11 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         
     }, warning = function(w) {
         result = paste("warning: ", w)
+        #traceback(1, max.lines = 1)
         print (result)
     }, error = function(e) {
         result = paste("error: ", e)
+        #traceback(1, max.lines = 1)
         print (result)
     }, finally = {
         
@@ -1029,4 +1076,92 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     
 }
 
-#processData("C:/MyProjects/Guru/EMBackTesting/Backtest_000/",TRUE, TRUE, TRUE)
+checkData <- function(RF, session)
+{
+    RootFolder = RF
+    DEBUG = FALSE
+
+    if (DEBUG) {
+        RootFolder = "C:/Users/xliao/Downloads/BacktestR/"
+    }
+    
+    result = ""
+    status_msg = ""
+    status_obj = "DC_status"
+    start_time = Sys.time()
+    
+    tryCatch({
+        init_var()
+        
+        ########## load translation files ##########
+        status_msg = "loading translation file..."
+        session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+        trans <<- loadtrans(RootFolder)
+
+        for (j in 1:length(Indices)) {
+            if (DEBUG) {
+                j = 1
+                StartFrom = as.Date("2002-11-30")
+            }
+            StartFrom = TH.Limits[TH.Limits$Indices==Indices[j], "StartFrom"]
+            status_msg = paste("merging", Indices[j], "data with translation file...")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            
+            ds = indexdata(Indices[j], RootFolder, IndexDataFolder, StartFrom)
+            # missing raw data
+            missing_months = as.data.frame(matrix(ncol = 2, nrow = 0))
+            names(missing_months) = c("Index.Name", "As.of.Date")
+            ds_months = ds %>% distinct(As.of.Date, .keep_all = FALSE)
+            total_months = as.numeric(as.mondate(max(ds_months$As.of.Date)) - as.mondate(min(ds_months$As.of.Date)))
+            #print(total_months)
+            for (i in 0:total_months) {
+                cur_month = as.mondate(min(ds_months$As.of.Date)) + i
+                if (nrow(subset(ds_months, ds_months$As.of.Date == as.Date(cur_month))) == 0) {
+                    #print(cur_month)
+                    missing_months[nrow(missing_months)+1,]=c(Indices[j],as.character(as.Date(cur_month)))
+                }
+            }
+            #print(missing_months)
+            if (j==1) {
+                write.table(missing_months, file = paste(RootFolder, "MissingRawData.csv", sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
+            }
+            else {
+                write.table(missing_months, file = paste(RootFolder, "MissingRawData.csv", sep =""), sep = ",", col.names = FALSE, row.names = FALSE, append = TRUE)
+            }
+            
+            # missing translation
+            # joining index file to translation file
+            ds = ds[, c("Ticker","As.of.Date","Cusip","ISIN.number","Bond.Name", "ISO.Country","ML.Industry.Lvl.3","ML.Industry.Lvl.4")]
+            ds$Index.Name = Indices[j]
+            ds = merge(ds, trans[ , c("Bond.Ticker","FROM.DATE.LINK","TO.DATE.LINK","ID_BB_UNIQUE")], 
+                        by.x="Ticker", by.y="Bond.Ticker", all.x=TRUE)
+            ds = subset(ds, ds$As.of.Date>=ds$FROM.DATE.LINK 
+                         & ds$As.of.Date<ds$TO.DATE.LINK)
+            ds = subset(ds, is.na(ds$ID_BB_UNIQUE))
+            ds = ds[, !(colnames(ds) %in% c("FROM.DATE.LINK","TO.DATE.LINK","ID_BB_UNIQUE"))]
+            # remove duplicates
+            ds = ds %>% distinct(Ticker,Cusip,ISIN.number,Bond.Name, .keep_all = TRUE)
+            if (j==1) {
+                write.table(ds, file = paste(RootFolder, "MissingTranslation.csv", sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
+            }
+            else {
+                write.table(ds, file = paste(RootFolder, "MissingTranslation.csv", sep =""), sep = ",", col.names = FALSE, row.names = FALSE, append = TRUE)
+            }
+            
+        }
+        result_file = "MissingTranslation.csv"
+        end_time = Sys.time()
+        time_took = as.numeric(difftime(end_time, start_time, units=("mins")))
+        time_took = format(round(time_took, 1), nsmall = 1)
+        result = paste(result_file, "generated successfully and took", time_took, "mins.")
+        
+    }, warning = function(w) {
+        result = paste("warning: ", w)
+        print (result)
+    }, error = function(e) {
+        result = paste("error: ", e)
+        print (result)
+    }, finally = {
+        
+    })   
+}

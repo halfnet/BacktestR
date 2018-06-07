@@ -195,6 +195,20 @@ ui <- tagList(
                             
                         )
                ),
+               tabPanel(title = "Data Check",
+                        fluidRow(
+                            column(1, 
+                                   actionButton(inputId = "DC_go", 
+                                                label = "GO!")
+                            ),
+                            column(10, 
+                                   textOutput("DC_status")
+                            )
+                        ),
+                        fluidRow(
+                            tags$hr()
+                        )
+               ),
                tabPanel(title = "Optimization",
                         fluidRow(
                             column(4, 
@@ -229,7 +243,7 @@ ui <- tagList(
                                                 value = 1),
                                    numericInput(inputId = "CS.TableOption.Max", 
                                                 label = "CS.TableOption.Max",
-                                                value = 4),
+                                                value = 3),
                                    numericInput(inputId = "CS.TableOption.Step", 
                                                 label = "CS.TableOption.Step",
                                                 value = 1)
@@ -280,6 +294,11 @@ server <- function(input, output, session) {
         updateTextInput(session, row$name, value = row$value)
     }
     TH.Limits = read.csv("indices.csv")
+    if (grepl("-", TH.Limits$StartFrom[1]))
+        TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%Y-%m-%d")
+    else
+        TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%m/%d/%Y")
+    
     
     rv <- reactiveValues(
         status = "ready",
@@ -305,6 +324,14 @@ server <- function(input, output, session) {
         result = processData(input$RootFolder, input$CH_CS.UseFile, input$CH_TH.UseFile, input$CH_ConstructModelPort, input$CH_ConstructModelPortMethod, TRUE, input$CH_OpinionDate, session) 
         session$sendCustomMessage(type = 'print', message = list(selector = 'CH_status', html = result))
         enable("CH_go")
+    })
+    
+    observeEvent(input$DC_go, {
+        disable("DC_go")
+        session$sendCustomMessage(type = 'print', message = list(selector = 'DC_status', html = "processing..."))
+        result = checkData(input$RootFolder, session) 
+        session$sendCustomMessage(type = 'print', message = list(selector = 'DC_status', html = result))
+        enable("DC_go")
     })
     
     observeEvent(input$save, {
@@ -342,10 +369,7 @@ server <- function(input, output, session) {
             hot_context_menu(allowRowEdit = FALSE, allowColEdit = FALSE)
     })
     
-    #output$show_inputs <- renderTable({
-    #    TH.Limits
-    #})    
-    
+
     AllInputs <- reactive({
         x <- reactiveValuesToList(input)
         x <- x[names(x)!="indices"]
