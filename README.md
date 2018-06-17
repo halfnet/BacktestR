@@ -2,14 +2,13 @@
 Backtest written in R
 
 TODOs:
-1) replace row by row rbind with do.call(rbind,...)
-   company scores (done) and max limit by name (done)
-2) UI to edit indices.csv (done)
-3) limited financials (done)
-4) threshold by MV% and DtS
-    4.a) introducing moving avg (done)
-    4.b) grid search?
-5) error handling (5/24 done)
-6) usability (done)
-    a. disable button when running (done)
-    b. report detailed status (done)
+Grid Search project:
+1) create metrics: TRR, EXR, sharpe, sortino, duration, ASW for index, port no tx, port
+    a) function to calculate each of the metrics using dataset for each index
+    b) write results to a file
+2) Calculate above metrics over multiple periods: full period, other pre-defined periods (bulls and bears)
+    a) config file to store different periods
+    b) UI to update/save config file
+3) Setup to adjust current score to opinion calculation
+4) Setup to include additional scores such as : ESG or liquidity 
+5) Setup for portfolio building, such as different weights for outperform, neutral and underperform 

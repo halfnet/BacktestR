@@ -10,6 +10,7 @@
 "CS.TableOption","4"
 "RootFolder","C:/MyProjects/Guru/BacktestR/"
 "IndexDataFolder","Bond raw data/Index constituents/"
+"IndexLvlDataFolder","Bond raw data/Index lvl data/"
 "OutPerformMultiple","3"
 "MaxWeightPerName","5"
 "BuyM.RatioCutOff","0"
