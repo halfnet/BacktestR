@@ -38,10 +38,12 @@ Ind_Lvl4 = ""
 
 TH.MinWght = 0
 TH.MA = 0
+TransactionCost = 0
 
 params=NULL
 TH.Limits=NULL
 Indices=NULL
+Periods=NULL
 
 trans=NULL
 scores=NULL
@@ -52,12 +54,31 @@ init_var <- function() {
     params <<- read.csv("parameters.csv")
     TH.Limits <<- read.csv("indices.csv")
     TH.Limits <<- subset(TH.Limits, TH.Limits$Include==1)
-    if (grepl("-", TH.Limits$StartFrom[1]))
-        TH.Limits$StartFrom <<- as.Date(TH.Limits$StartFrom, "%Y-%m-%d")
-    else
-        TH.Limits$StartFrom <<- as.Date(TH.Limits$StartFrom, "%m/%d/%Y")
+    for(i in 1:nrow(TH.Limits)) {
+        if (grepl("-", TH.Limits$StartFrom[i])) {
+            TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%Y-%m-%d")
+            break
+        }
+        if (grepl("/", TH.Limits$StartFrom[i])) {
+            TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%m/%d/%Y")
+            break
+        }
+    }
     
     Indices <<- as.vector(TH.Limits$Indices)
+
+    Periods <<- read.csv("periods.csv")
+    for(i in 1:nrow(Periods)) {
+        if (grepl("-", Periods$Start[i])) {
+            Periods$Start = as.Date(Periods$Start, "%Y-%m-%d")
+            Periods$End = as.Date(Periods$End, "%Y-%m-%d")
+        }
+        if (grepl("/", Periods$Start[i])) {
+            Periods$Start = as.Date(Periods$Start, "%m/%d/%Y")
+            Periods$End = as.Date(Periods$End, "%m/%d/%Y")
+        }
+    }
+    
     ########## setting parameters ##########
     CS.MaxRange.Q <<- as.numeric(as.vector(params$value[params$name=="CS.MaxRange.Q"]))
     CS.MaxRange.SA <<- as.numeric(as.vector(params$value[params$name=="CS.MaxRange.SA"]))
@@ -91,6 +112,8 @@ init_var <- function() {
     
     TH.MinWght <<- as.numeric(as.vector(params$value[params$name=="TH.MinWght"]))
     TH.MA <<- as.numeric(as.vector(params$value[params$name=="TH.MA"]))
+
+    TransactionCost <<- as.numeric(as.vector(params$value[params$name=="TransactionCost"]))
 }
 
 # this function loads translation template
@@ -780,6 +803,87 @@ limitWeight <- function(df) {
 }
 
 
+writeMetrics <- function(fn, final_index_month, index, period_name, period_start, period_end) {
+    #print(paste(index, period_name, period_start, period_end))
+    if (period_name!="ALL") {
+        final_index_month = subset(final_index_month, final_index_month$Index.Name == index &
+                                   final_index_month$As.of.Date>=period_start & final_index_month$As.of.Date<period_end)
+    } else {
+        final_index_month = subset(final_index_month, final_index_month$Index.Name == index)
+    }
+    if (nrow(final_index_month) > 0) {
+        final_index = group_by(final_index_month, Index.Name) %>% 
+            summarize(months = n(),
+                      # index
+                      idx_trr_prod = prod(idx_trr_tmp),
+                      idx_exr_prod = prod(idx_exr_tmp),
+                      idx_err_prod = prod(idx_err_tmp),
+                      idx_dur = mean(idx_dur),
+                      idx_asw = mean(idx_asw),
+                      idx_dxs = mean(idx_dxs),
+                      idx_stdev = sd(idx_trr)*sqrt(12),
+                      idx_dndev = sqrt(sum(idx_trrdn*idx_trrdn)*12/n()),
+                      #p1
+                      p1_dur = mean(p1_dur),
+                      p1_asw = mean(p1_asw),
+                      p1_dxs = mean(p1_dxs),
+                      # transaction cost
+                      p1_trr_prod = prod(p1_trr_tmp),
+                      p1_exr_prod = prod(p1_exr_tmp),
+                      p1_err_prod = prod(p1_err_tmp),
+                      p1_stdev = sd(p1_trr)*sqrt(12),
+                      p1_dndev = sqrt(sum(p1_trrdn*p1_trrdn)*12/n()),
+                      #p1_to = sum(p1_TX+p1_TX2)*12/n(),
+                      
+                      # no transaction cost
+                      p1nx_trr_prod = prod(p1nx_trr_tmp),
+                      p1nx_exr_prod = prod(p1nx_exr_tmp),
+                      p1nx_err_prod = prod(p1nx_err_tmp),
+                      p1nx_stdev = sd(p1nx_trr)*sqrt(12),
+                      p1nx_dndev = sqrt(sum(p1nx_trrdn*p1nx_trrdn)*12/n())
+            )
+        # index
+        final_index$idx_trr = (`^`(final_index$idx_trr_prod,12/final_index$months)-1)*100
+        final_index$idx_exr = (`^`(final_index$idx_exr_prod,12/final_index$months)-1)*100
+        final_index$idx_err = (`^`(final_index$idx_err_prod,12/final_index$months)-1)*100
+        final_index$idx_sharpe = final_index$idx_err/final_index$idx_stdev
+        final_index$idx_sortino = final_index$idx_trr/final_index$idx_dndev
+        #p1
+        final_index$p1_trr = (`^`(final_index$p1_trr_prod,12/final_index$months)-1)*100
+        final_index$p1_exr = (`^`(final_index$p1_exr_prod,12/final_index$months)-1)*100
+        final_index$p1_err = (`^`(final_index$p1_err_prod,12/final_index$months)-1)*100
+        final_index$p1_sharpe = final_index$p1_err/final_index$p1_stdev
+        final_index$p1_sortino = final_index$p1_trr/final_index$p1_dndev
+        
+        # p1nx
+        final_index$p1nx_trr = (`^`(final_index$p1nx_trr_prod,12/final_index$months)-1)*100
+        final_index$p1nx_exr = (`^`(final_index$p1nx_exr_prod,12/final_index$months)-1)*100
+        final_index$p1nx_err = (`^`(final_index$p1nx_err_prod,12/final_index$months)-1)*100
+        final_index$p1nx_sharpe = final_index$p1nx_err/final_index$p1nx_stdev
+        final_index$p1nx_sortino = final_index$p1nx_trr/final_index$p1nx_dndev
+        
+        # remove unused columns
+        final_index = final_index[, !(colnames(final_index) %in% 
+                                          c("idx_trr_prod", "idx_exr_prod", "idx_err_prod", "idx_stdev", "idx_dndev", 
+                                            "p1_trr_prod", "p1_exr_prod", "p1_err_prod", "p1_stdev", "p1_dndev",
+                                            "p1nx_trr_prod", "p1nx_exr_prod", "p1nx_err_prod", "p1nx_stdev", "p1nx_dndev"))]    
+        final_index$period = period_name
+        final_index$var_dur = abs(final_index$p1_dur - final_index$idx_dur)/final_index$idx_dur
+        final_index$var_asw = abs(final_index$p1_asw - final_index$idx_asw)/final_index$idx_asw
+        final_index$var_trr = final_index$p1_trr - final_index$idx_trr
+        final_index$var_exr = final_index$p1_exr - final_index$idx_exr
+        final_index$var_err = final_index$p1_err - final_index$idx_err
+        final_index$var_sharpe = final_index$p1_sharpe - final_index$idx_sharpe
+        final_index$var_sortino = final_index$p1_sortino - final_index$idx_sortino
+        
+        if (!file.exists(fn))
+            write.table(final_index, file = fn, sep = ",", col.names = TRUE, row.names = FALSE)
+        else
+            write.table(final_index, file = fn, sep = ",", col.names = FALSE, row.names = FALSE, append = TRUE)
+    }
+    
+}
+
 # main backtest data processing function called from UI
 processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     
@@ -842,7 +946,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             if (DEBUG) {
                 j = 1
             }
-            StartFrom = TH.Limits[TH.Limits$Indices==Indices[j], "StartFrom"]
+            StartFrom = as.Date(TH.Limits[TH.Limits$Indices==Indices[j], "StartFrom"])
             status_msg = paste("merging", Indices[j], "data with company opinions...")
             session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
 
@@ -1105,17 +1209,30 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         }
         write.table(final, file = paste(RootFolder, result_file, sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
 
+        status_msg = paste("calculating final metrics...")
+        session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
         ####
-        # START here we will summarize the data by index and month (As.of.Date)
+        # START: calculate final metrics
         ####
-        RootFolder = "C:/MyProjects/Guru/BacktestR/"
-        IndexLvlDataFolder = "Bond raw data/Index lvl data/"
-        OutPerformMultiple = 3
-        
-        final = read.csv(paste(RootFolder,"BondMaster.csv",sep = ""))
-        final$Excess.Rtn...MTD = ifelse(is.na(final$Excess.Rtn...MTD),0,final$Excess.Rtn...MTD)
-        final_index_month = NULL
-        final_index = NULL
+         # RootFolder = "C:/MyProjects/Guru/BacktestR/"
+         # IndexLvlDataFolder = "Bond raw data/Index lvl data/"
+         # OutPerformMultiple = 3
+         # TransactionCost = 0.3
+         # 
+         # final = read.csv(paste(RootFolder,"BondMaster.csv",sep = ""))
+         # final$Excess.Rtn...MTD = ifelse(is.na(final$Excess.Rtn...MTD),0,final$Excess.Rtn...MTD)
+         # final$As.of.Date = as.Date(final$As.of.Date)
+         # final_index_month = NULL
+         # final_index = NULL
+         # 
+         # Periods <- read.csv("periods.csv")
+         # if (grepl("-", Periods$Start[1])) {
+         #     Periods$Start <- as.Date(Periods$Start, "%Y-%m-%d")
+         #     Periods$End <- as.Date(Periods$End, "%Y-%m-%d")
+         # } else {
+         #     Periods$Start <- as.Date(Periods$Start, "%m/%d/%Y")
+         #     Periods$End <- as.Date(Periods$End, "%m/%d/%Y")
+         # }
         #### above is for TESTING ONLY
         
                 
@@ -1150,8 +1267,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         final$NewCusip = ifelse(final$IndexCusip==final$IndexCusip.y,0,1)
         final$F.OP.CAT.y = ifelse(final$NewCusip==1, "NONE", final$F.OP.CAT.y)
         final$p1.Op.Chg = ifelse(final$NewCusip==0,ifelse(final$F.OP.CAT!=final$F.OP.CAT.y,1,0),0)
-        final$p1_TX = ifelse(final$p1.Op.Chg==1,abs(final$p1_wght-final$p1_wght.y),0) * 0.3 / 100   #assume price = 100
-        final$p1_TX2 = ifelse(final$p1.Op.Chg==1,final$p1_wght-final$p1_wght.y,0) * 0.3 / 100       #assume price = 100
+        final$p1_TX = ifelse(final$p1.Op.Chg==1,abs(final$p1_wght-final$p1_wght.y),0) * TransactionCost / 100   #assume price = 100
+        final$p1_TX2 = ifelse(final$p1.Op.Chg==1,final$p1_wght-final$p1_wght.y,0) * TransactionCost / 100       #assume price = 100
         
         final_index_month = group_by(final, Index.Name, As.of.Date) %>% 
             summarize(
@@ -1215,57 +1332,21 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         final_index_month$p1nx_trrdn = ifelse(final_index_month$p1nx_trr>0,0,final_index_month$p1nx_trr)
         final_index_month$p1nx_err = final_index_month$p1nx_trr - final_index_month$TRR...1.month.LOC
         final_index_month$p1nx_err_tmp = 1+final_index_month$p1nx_err/100
+
+        fn = paste(RootFolder, "metrics.csv", sep ="")
+        if (file.exists(fn)) file.remove(fn)
+ 
+        for (i in 1:nrow(Periods)) {
+            period = Periods[i,]
+            writeMetrics(fn, final_index_month, 
+                         as.character(period$Indices), 
+                         as.character(period$Name), 
+                         as.character(period$Start), 
+                         as.character(period$End))
+        }
         
-        final_index = group_by(final_index_month, Index.Name) %>% 
-            summarize(months = n(),
-                      # index
-                      idx_trr_prod = prod(idx_trr_tmp),
-                      idx_exr_prod = prod(idx_exr_tmp),
-                      idx_err_prod = prod(idx_err_tmp),
-                      idx_dur = mean(idx_dur),
-                      idx_asw = mean(idx_asw),
-                      idx_dxs = mean(idx_dxs),
-                      idx_stdev = sd(idx_trr)*sqrt(12),
-                      idx_dndev = sqrt(sum(idx_trrdn*idx_trrdn)*12/n()),
-                      #p1
-                      p1_dur = mean(p1_dur),
-                      p1_asw = mean(p1_asw),
-                      p1_dxs = mean(p1_dxs),
-                      # transaction cost
-                      p1_trr_prod = prod(p1_trr_tmp),
-                      p1_exr_prod = prod(p1_exr_tmp),
-                      p1_err_prod = prod(p1_err_tmp),
-                      p1_stdev = sd(p1_trr)*sqrt(12),
-                      p1_dndev = sqrt(sum(p1_trrdn*p1_trrdn)*12/n()),
-                      
-                      # no transaction cost
-                      p1nx_trr_prod = prod(p1nx_trr_tmp),
-                      p1nx_exr_prod = prod(p1nx_exr_tmp),
-                      p1nx_err_prod = prod(p1nx_err_tmp),
-                      p1nx_stdev = sd(p1nx_trr)*sqrt(12),
-                      p1nx_dndev = sqrt(sum(p1nx_trrdn*p1nx_trrdn)*12/n())
-            )
-        # index
-        final_index$idx_trr = (`^`(final_index$idx_trr_prod,12/final_index$months)-1)*100
-        final_index$idx_exr = (`^`(final_index$idx_exr_prod,12/final_index$months)-1)*100
-        final_index$idx_err = (`^`(final_index$idx_err_prod,12/final_index$months)-1)*100
-        final_index$idx_sharpe = final_index$idx_err/final_index$idx_stdev
-        final_index$idx_sortino = final_index$idx_trr/final_index$idx_dndev
-        #p1
-        final_index$p1_trr = (`^`(final_index$p1_trr_prod,12/final_index$months)-1)*100
-        final_index$p1_exr = (`^`(final_index$p1_exr_prod,12/final_index$months)-1)*100
-        final_index$p1_err = (`^`(final_index$p1_err_prod,12/final_index$months)-1)*100
-        final_index$p1_sharpe = final_index$p1_err/final_index$p1_stdev
-        final_index$p1_sortino = final_index$p1_trr/final_index$p1_dndev
-        
-        # p1nx
-        final_index$p1nx_trr = (`^`(final_index$p1nx_trr_prod,12/final_index$months)-1)*100
-        final_index$p1nx_exr = (`^`(final_index$p1nx_exr_prod,12/final_index$months)-1)*100
-        final_index$p1nx_err = (`^`(final_index$p1nx_err_prod,12/final_index$months)-1)*100
-        final_index$p1nx_sharpe = final_index$p1nx_err/final_index$p1nx_stdev
-        final_index$p1nx_sortino = final_index$p1nx_trr/final_index$p1nx_dndev
         ####
-        # END
+        # END: calculate final metrics
         ####
         
         end_time = Sys.time()

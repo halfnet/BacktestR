@@ -90,6 +90,9 @@ ui <- tagList(
                                    numericInput(inputId = "OutPerformMultiple", 
                                                 label = "Outperform Multiple",
                                                 value = 3),
+                                   numericInput(inputId = "TransactionCost", 
+                                                label = "Transaction Cost",
+                                                value = 0.3),
                                    numericInput(inputId = "MaxWeightPerName", 
                                                 label = "Max Weight Per Name (%)",
                                                 value = 5),
@@ -152,6 +155,12 @@ ui <- tagList(
                         ),
                         fluidRow(
                             rHandsontableOutput("indices")
+                        ),
+                        fluidRow(
+                            tags$hr()
+                        ),
+                        fluidRow(
+                            rHandsontableOutput("periods")
                         )
                         
                ),
@@ -297,10 +306,28 @@ server <- function(input, output, session) {
         updateTextInput(session, row$name, value = row$value)
     }
     TH.Limits = read.csv("indices.csv")
-    if (grepl("-", TH.Limits$StartFrom[1]))
-        TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%Y-%m-%d")
-    else
-        TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%m/%d/%Y")
+    for(i in 1:nrow(TH.Limits)) {
+        if (grepl("-", TH.Limits$StartFrom[i])) {
+            TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%Y-%m-%d")
+            break
+        }
+        if (grepl("/", TH.Limits$StartFrom[i])) {
+            TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%m/%d/%Y")
+            break
+        }
+    }
+    
+    UpDownMkts = read.csv("periods.csv")
+    for(i in 1:nrow(UpDownMkts)) {
+        if (grepl("-", UpDownMkts$Start[i])) {
+            UpDownMkts$Start = as.Date(UpDownMkts$Start, "%Y-%m-%d")
+            UpDownMkts$End = as.Date(UpDownMkts$End, "%Y-%m-%d")
+        }
+        if (grepl("/", UpDownMkts$Start[i])) {
+            UpDownMkts$Start = as.Date(UpDownMkts$Start, "%m/%d/%Y")
+            UpDownMkts$End = as.Date(UpDownMkts$End, "%m/%d/%Y")
+        }
+    }
     
     
     rv <- reactiveValues(
@@ -341,7 +368,8 @@ server <- function(input, output, session) {
         df = AllInputs()
         params$value = df[match(params$name, df$name),2]
         write.table(params, file = "parameters.csv", sep = ",", col.names = TRUE, row.names = FALSE)
-        write.table(data(), file = "indices.csv", sep = ",", col.names = TRUE, row.names = FALSE)
+        write.table(indices_data(), file = "indices.csv", sep = ",", col.names = TRUE, row.names = FALSE)
+        write.table(periods_data(), file = "periods.csv", sep = ",", col.names = TRUE, row.names = FALSE)
         session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = "saved!"))
     })
 
@@ -349,33 +377,59 @@ server <- function(input, output, session) {
     output$CH_status <- renderText({rv$CH_status})
     
     #************* indices editor ***********#
-    values = reactiveValues()
+    indices_values = reactiveValues()
     
-    data = reactive({
+    indices_data = reactive({
         if (!is.null(input$indices)) {
             DF = hot_to_r(input$indices)
         } else {
-            if (is.null(values[["DF"]]))
+            if (is.null(indices_values[["DF"]]))
                 DF = TH.Limits
             else
-                DF = values[["DF"]]
+                DF = indices_values[["DF"]]
         }
         
-        values[["DF"]] = DF
+        indices_values[["DF"]] = DF
         DF
     })
     
     output$indices <- renderRHandsontable({
-        DF = data()
+        DF = indices_data()
         if (!is.null(DF))
             rhandsontable(DF, stretchH = "all") %>%
             hot_context_menu(allowRowEdit = FALSE, allowColEdit = FALSE)
     })
     
-
+    #************* periods editor ***********#
+    periods_values = reactiveValues()
+    
+    periods_data = reactive({
+        if (!is.null(input$periods)) {
+            DF = hot_to_r(input$periods)
+        } else {
+            if (is.null(periods_values[["DF"]]))
+                DF = UpDownMkts
+            else
+                DF = periods_values[["DF"]]
+        }
+        
+        periods_values[["DF"]] = DF
+        DF
+    })
+    
+    output$periods <- renderRHandsontable({
+        DF = periods_data()
+        DF$Name = as.character(DF$Name)
+        if (!is.null(DF))
+            rhandsontable(DF, stretchH = "all") %>%
+            hot_context_menu(allowRowEdit = TRUE, allowColEdit = FALSE)
+    })
+    
+    
+    #************* gather all inputs besides tables ***********#
     AllInputs <- reactive({
         x <- reactiveValuesToList(input)
-        x <- x[names(x)!="indices"]
+        x <- x[names(x)!="indices" & names(x)!="periods"]
         data.frame(
             name = names(x),
             value = unlist(x, use.names = FALSE)

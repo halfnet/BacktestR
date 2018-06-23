@@ -12,6 +12,7 @@
 "IndexDataFolder","Bond raw data/Index constituents/"
 "IndexLvlDataFolder","Bond raw data/Index lvl data/"
 "OutPerformMultiple","3"
+"TransactionCost","0.3"
 "MaxWeightPerName","5"
 "BuyM.RatioCutOff","0"
 "HoldM.RatioCutOff","1"
