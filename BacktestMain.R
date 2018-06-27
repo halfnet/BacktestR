@@ -1209,145 +1209,147 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         }
         write.table(final, file = paste(RootFolder, result_file, sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
 
-        status_msg = paste("calculating final metrics...")
-        session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
-        ####
-        # START: calculate final metrics
-        ####
-         # RootFolder = "C:/MyProjects/Guru/BacktestR/"
-         # IndexLvlDataFolder = "Bond raw data/Index lvl data/"
-         # OutPerformMultiple = 3
-         # TransactionCost = 0.3
-         # 
-         # final = read.csv(paste(RootFolder,"BondMaster.csv",sep = ""))
-         # final$Excess.Rtn...MTD = ifelse(is.na(final$Excess.Rtn...MTD),0,final$Excess.Rtn...MTD)
-         # final$As.of.Date = as.Date(final$As.of.Date)
-         # final_index_month = NULL
-         # final_index = NULL
-         # 
-         # Periods <- read.csv("periods.csv")
-         # if (grepl("-", Periods$Start[1])) {
-         #     Periods$Start <- as.Date(Periods$Start, "%Y-%m-%d")
-         #     Periods$End <- as.Date(Periods$End, "%Y-%m-%d")
-         # } else {
-         #     Periods$Start <- as.Date(Periods$Start, "%m/%d/%Y")
-         #     Periods$End <- as.Date(Periods$End, "%m/%d/%Y")
-         # }
-        #### above is for TESTING ONLY
-        
-                
-        G0O1 = indexlvldata(RootFolder, IndexLvlDataFolder)
-        G0O1 = subset(G0O1, G0O1$Index=="G0O1")
-
-        final$IndexCusip = paste(final$Index.Name, final$Cusip, sep = "")
-        final$F.OP.CAT = ifelse(final$F.OP==-2|final$F.OP==0, "neutral", 
-                                ifelse(final$F.OP==1, "OutPerform", "UnderPerform"))
-        final$DxS = final$PrevMend.Mod.Dur.To.Worst*final$PrevMend.AssetSwp
- 
-        
-        # p1
-        final$p1 = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, 1,0)
-        final$p1_trr = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$TRR...MTD.LOC,0)
-        final$p1_exr = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$Excess.Rtn...MTD,0)
-        final$p1_wght = final$ReWeighted2
-        final$p1_dur = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$PrevMend.Mod.Dur.To.Worst,0)
-        final$p1_asw = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$PrevMend.AssetSwp,0)
-        final$p1_dxs = final$p1_dur*final$p1_asw
-        
-
-        final$Index1 = final$Index + 1
-        final = merge(final, final[ , c("Index1","IndexCusip", "F.OP.CAT", "p1_wght")],
-                      by.x="Index", by.y="Index1", all.x=TRUE)
-        
-        names(final)[names(final) == "IndexCusip.x"] = "IndexCusip"
-        names(final)[names(final) == "F.OP.CAT.x"] = "F.OP.CAT"
-        names(final)[names(final) == "p1_wght.x"] = "p1_wght"
-        final$IndexCusip.y[1]="NONE"
-        final$F.OP.CAT.y[1]="NONE"
-        final$NewCusip = ifelse(final$IndexCusip==final$IndexCusip.y,0,1)
-        final$F.OP.CAT.y = ifelse(final$NewCusip==1, "NONE", final$F.OP.CAT.y)
-        final$p1.Op.Chg = ifelse(final$NewCusip==0,ifelse(final$F.OP.CAT!=final$F.OP.CAT.y,1,0),0)
-        final$p1_TX = ifelse(final$p1.Op.Chg==1,abs(final$p1_wght-final$p1_wght.y),0) * TransactionCost / 100   #assume price = 100
-        final$p1_TX2 = ifelse(final$p1.Op.Chg==1,final$p1_wght-final$p1_wght.y,0) * TransactionCost / 100       #assume price = 100
-        
-        final_index_month = group_by(final, Index.Name, As.of.Date) %>% 
-            summarize(
-                      # index
-                      idx_obs = n(),
-                      idx_trr = sum(TRR...MTD.LOC*Orig.PrevMend.Mkt...Index.Wght),
-                      idx_exr = sum(Excess.Rtn...MTD*Orig.PrevMend.Mkt...Index.Wght),
-                      idx_dur = sum(PrevMend.Mod.Dur.To.Worst*Orig.PrevMend.Mkt...Index.Wght),
-                      idx_asw = sum(PrevMend.AssetSwp*Orig.PrevMend.Mkt...Index.Wght),
-                      idx_dxs = sum(DxS*Orig.PrevMend.Mkt...Index.Wght),
-                      idx_wght = sum(Orig.PrevMend.Mkt...Index.Wght),
-                      # p1
-                      p1_obs = sum(p1),
-                      p1nx_trr = sum(p1_trr*p1_wght),
-                      p1nx_exr = sum(p1_exr*p1_wght),
-                      p1_dur = sum(p1_dur*p1_wght),
-                      p1_asw = sum(p1_asw*p1_wght),
-                      p1_dxs = sum(p1_dxs*p1_wght),
-                      p1_TX = sum(p1_TX),
-                      p1_TX2 = abs(sum(p1_TX2)),
-                      
-                      # this one last
-                      p1_wght = sum(p1_wght)
-            )
-        # link risk free rate
-        final_index_month$As.of.Date = as.Date(final_index_month$As.of.Date)
-        final_index_month = merge(final_index_month, G0O1[ , c("Date", "TRR...1.month.LOC")], 
-              by.x="As.of.Date", by.y="Date", all.x=TRUE)
-        
-        # index metrics
-        final_index_month$idx_trr = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_trr/final_index_month$idx_wght)
-        final_index_month$idx_trr_tmp = 1+final_index_month$idx_trr/100
-        final_index_month$idx_exr = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_exr/final_index_month$idx_wght)
-        final_index_month$idx_exr_tmp = 1+final_index_month$idx_exr/100
-        final_index_month$idx_dur = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_dur/final_index_month$idx_wght)
-        final_index_month$idx_asw = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_asw/final_index_month$idx_wght)
-        final_index_month$idx_dxs = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_dxs/final_index_month$idx_wght)
-        final_index_month$idx_trrdn = ifelse(final_index_month$idx_trr>0,0,final_index_month$idx_trr)
-        final_index_month$idx_err = final_index_month$idx_trr - final_index_month$TRR...1.month.LOC
-        final_index_month$idx_err_tmp = 1+final_index_month$idx_err/100
-
-        # port1 metrics
-        final_index_month$p1_dur = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_dur/final_index_month$p1_wght)
-        final_index_month$p1_asw = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_asw/final_index_month$p1_wght)
-        final_index_month$p1_dxs = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_dxs/final_index_month$p1_wght)
-        # transaction cost
-        final_index_month$p1_trr = ifelse(final_index_month$p1_wght==0,0,
-                                          final_index_month$p1nx_trr/final_index_month$p1_wght-final_index_month$p1_TX-final_index_month$p1_TX2)
-        final_index_month$p1_trr_tmp = 1+final_index_month$p1_trr/100
-        final_index_month$p1_exr = ifelse(final_index_month$p1_wght==0,0,
-                                          final_index_month$p1nx_exr/final_index_month$p1_wght-final_index_month$p1_TX-final_index_month$p1_TX2)
-        final_index_month$p1_exr_tmp = 1+final_index_month$p1_exr/100
-        final_index_month$p1_trrdn = ifelse(final_index_month$p1_trr>0,0,final_index_month$p1_trr)
-        final_index_month$p1_err = final_index_month$p1_trr - final_index_month$TRR...1.month.LOC
-        final_index_month$p1_err_tmp = 1+final_index_month$p1_err/100
-        # no transaction cost
-        final_index_month$p1nx_trr = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1nx_trr/final_index_month$p1_wght)
-        final_index_month$p1nx_trr_tmp = 1+final_index_month$p1nx_trr/100
-        final_index_month$p1nx_exr = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1nx_exr/final_index_month$p1_wght)
-        final_index_month$p1nx_exr_tmp = 1+final_index_month$p1nx_exr/100
-        final_index_month$p1nx_trrdn = ifelse(final_index_month$p1nx_trr>0,0,final_index_month$p1nx_trr)
-        final_index_month$p1nx_err = final_index_month$p1nx_trr - final_index_month$TRR...1.month.LOC
-        final_index_month$p1nx_err_tmp = 1+final_index_month$p1nx_err/100
-
-        fn = paste(RootFolder, "metrics.csv", sep ="")
-        if (file.exists(fn)) file.remove(fn)
- 
-        for (i in 1:nrow(Periods)) {
-            period = Periods[i,]
-            writeMetrics(fn, final_index_month, 
-                         as.character(period$Indices), 
-                         as.character(period$Name), 
-                         as.character(period$Start), 
-                         as.character(period$End))
+        if (!CH) {
+            status_msg = paste("calculating final metrics...")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            ####
+            # START: calculate final metrics
+            ####
+             # RootFolder = "C:/MyProjects/Guru/BacktestR/"
+             # IndexLvlDataFolder = "Bond raw data/Index lvl data/"
+             # OutPerformMultiple = 3
+             # TransactionCost = 0.3
+             # 
+             # final = read.csv(paste(RootFolder,"BondMaster.csv",sep = ""))
+             # final$Excess.Rtn...MTD = ifelse(is.na(final$Excess.Rtn...MTD),0,final$Excess.Rtn...MTD)
+             # final$As.of.Date = as.Date(final$As.of.Date)
+             # final_index_month = NULL
+             # final_index = NULL
+             # 
+             # Periods <- read.csv("periods.csv")
+             # if (grepl("-", Periods$Start[1])) {
+             #     Periods$Start <- as.Date(Periods$Start, "%Y-%m-%d")
+             #     Periods$End <- as.Date(Periods$End, "%Y-%m-%d")
+             # } else {
+             #     Periods$Start <- as.Date(Periods$Start, "%m/%d/%Y")
+             #     Periods$End <- as.Date(Periods$End, "%m/%d/%Y")
+             # }
+            #### above is for TESTING ONLY
+            
+                    
+            G0O1 = indexlvldata(RootFolder, IndexLvlDataFolder)
+            G0O1 = subset(G0O1, G0O1$Index=="G0O1")
+    
+            final$IndexCusip = paste(final$Index.Name, final$Cusip, sep = "")
+            final$F.OP.CAT = ifelse(final$F.OP==-2|final$F.OP==0, "neutral", 
+                                    ifelse(final$F.OP==1, "OutPerform", "UnderPerform"))
+            final$DxS = final$PrevMend.Mod.Dur.To.Worst*final$PrevMend.AssetSwp
+     
+            
+            # p1
+            final$p1 = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, 1,0)
+            final$p1_trr = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$TRR...MTD.LOC,0)
+            final$p1_exr = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$Excess.Rtn...MTD,0)
+            final$p1_wght = final$ReWeighted2
+            final$p1_dur = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$PrevMend.Mod.Dur.To.Worst,0)
+            final$p1_asw = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$PrevMend.AssetSwp,0)
+            final$p1_dxs = final$p1_dur*final$p1_asw
+            
+    
+            final$Index1 = final$Index + 1
+            final = merge(final, final[ , c("Index1","IndexCusip", "F.OP.CAT", "p1_wght")],
+                          by.x="Index", by.y="Index1", all.x=TRUE)
+            
+            names(final)[names(final) == "IndexCusip.x"] = "IndexCusip"
+            names(final)[names(final) == "F.OP.CAT.x"] = "F.OP.CAT"
+            names(final)[names(final) == "p1_wght.x"] = "p1_wght"
+            final$IndexCusip.y[1]="NONE"
+            final$F.OP.CAT.y[1]="NONE"
+            final$NewCusip = ifelse(final$IndexCusip==final$IndexCusip.y,0,1)
+            final$F.OP.CAT.y = ifelse(final$NewCusip==1, "NONE", final$F.OP.CAT.y)
+            final$p1.Op.Chg = ifelse(final$NewCusip==0,ifelse(final$F.OP.CAT!=final$F.OP.CAT.y,1,0),0)
+            final$p1_TX = ifelse(final$p1.Op.Chg==1,abs(final$p1_wght-final$p1_wght.y),0) * TransactionCost / 100   #assume price = 100
+            final$p1_TX2 = ifelse(final$p1.Op.Chg==1,final$p1_wght-final$p1_wght.y,0) * TransactionCost / 100       #assume price = 100
+            
+            final_index_month = group_by(final, Index.Name, As.of.Date) %>% 
+                summarize(
+                          # index
+                          idx_obs = n(),
+                          idx_trr = sum(TRR...MTD.LOC*Orig.PrevMend.Mkt...Index.Wght),
+                          idx_exr = sum(Excess.Rtn...MTD*Orig.PrevMend.Mkt...Index.Wght),
+                          idx_dur = sum(PrevMend.Mod.Dur.To.Worst*Orig.PrevMend.Mkt...Index.Wght),
+                          idx_asw = sum(PrevMend.AssetSwp*Orig.PrevMend.Mkt...Index.Wght),
+                          idx_dxs = sum(DxS*Orig.PrevMend.Mkt...Index.Wght),
+                          idx_wght = sum(Orig.PrevMend.Mkt...Index.Wght),
+                          # p1
+                          p1_obs = sum(p1),
+                          p1nx_trr = sum(p1_trr*p1_wght),
+                          p1nx_exr = sum(p1_exr*p1_wght),
+                          p1_dur = sum(p1_dur*p1_wght),
+                          p1_asw = sum(p1_asw*p1_wght),
+                          p1_dxs = sum(p1_dxs*p1_wght),
+                          p1_TX = sum(p1_TX),
+                          p1_TX2 = abs(sum(p1_TX2)),
+                          
+                          # this one last
+                          p1_wght = sum(p1_wght)
+                )
+            # link risk free rate
+            final_index_month$As.of.Date = as.Date(final_index_month$As.of.Date)
+            final_index_month = merge(final_index_month, G0O1[ , c("Date", "TRR...1.month.LOC")], 
+                  by.x="As.of.Date", by.y="Date", all.x=TRUE)
+            
+            # index metrics
+            final_index_month$idx_trr = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_trr/final_index_month$idx_wght)
+            final_index_month$idx_trr_tmp = 1+final_index_month$idx_trr/100
+            final_index_month$idx_exr = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_exr/final_index_month$idx_wght)
+            final_index_month$idx_exr_tmp = 1+final_index_month$idx_exr/100
+            final_index_month$idx_dur = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_dur/final_index_month$idx_wght)
+            final_index_month$idx_asw = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_asw/final_index_month$idx_wght)
+            final_index_month$idx_dxs = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_dxs/final_index_month$idx_wght)
+            final_index_month$idx_trrdn = ifelse(final_index_month$idx_trr>0,0,final_index_month$idx_trr)
+            final_index_month$idx_err = final_index_month$idx_trr - final_index_month$TRR...1.month.LOC
+            final_index_month$idx_err_tmp = 1+final_index_month$idx_err/100
+    
+            # port1 metrics
+            final_index_month$p1_dur = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_dur/final_index_month$p1_wght)
+            final_index_month$p1_asw = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_asw/final_index_month$p1_wght)
+            final_index_month$p1_dxs = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_dxs/final_index_month$p1_wght)
+            # transaction cost
+            final_index_month$p1_trr = ifelse(final_index_month$p1_wght==0,0,
+                                              final_index_month$p1nx_trr/final_index_month$p1_wght-final_index_month$p1_TX-final_index_month$p1_TX2)
+            final_index_month$p1_trr_tmp = 1+final_index_month$p1_trr/100
+            final_index_month$p1_exr = ifelse(final_index_month$p1_wght==0,0,
+                                              final_index_month$p1nx_exr/final_index_month$p1_wght-final_index_month$p1_TX-final_index_month$p1_TX2)
+            final_index_month$p1_exr_tmp = 1+final_index_month$p1_exr/100
+            final_index_month$p1_trrdn = ifelse(final_index_month$p1_trr>0,0,final_index_month$p1_trr)
+            final_index_month$p1_err = final_index_month$p1_trr - final_index_month$TRR...1.month.LOC
+            final_index_month$p1_err_tmp = 1+final_index_month$p1_err/100
+            # no transaction cost
+            final_index_month$p1nx_trr = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1nx_trr/final_index_month$p1_wght)
+            final_index_month$p1nx_trr_tmp = 1+final_index_month$p1nx_trr/100
+            final_index_month$p1nx_exr = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1nx_exr/final_index_month$p1_wght)
+            final_index_month$p1nx_exr_tmp = 1+final_index_month$p1nx_exr/100
+            final_index_month$p1nx_trrdn = ifelse(final_index_month$p1nx_trr>0,0,final_index_month$p1nx_trr)
+            final_index_month$p1nx_err = final_index_month$p1nx_trr - final_index_month$TRR...1.month.LOC
+            final_index_month$p1nx_err_tmp = 1+final_index_month$p1nx_err/100
+    
+            fn = paste(RootFolder, "metrics.csv", sep ="")
+            if (file.exists(fn)) file.remove(fn)
+     
+            for (i in 1:nrow(Periods)) {
+                period = Periods[i,]
+                writeMetrics(fn, final_index_month, 
+                             as.character(period$Indices), 
+                             as.character(period$Name), 
+                             as.character(period$Start), 
+                             as.character(period$End))
+            }
+            
+            ####
+            # END: calculate final metrics
+            ####
         }
-        
-        ####
-        # END: calculate final metrics
-        ####
         
         end_time = Sys.time()
         time_took = as.numeric(difftime(end_time, start_time, units=("mins")))
@@ -1395,7 +1397,7 @@ checkData <- function(RF, session)
                 j = 1
                 StartFrom = as.Date("2002-11-30")
             }
-            StartFrom = TH.Limits[TH.Limits$Indices==Indices[j], "StartFrom"]
+            StartFrom = as.Date(TH.Limits[TH.Limits$Indices==Indices[j], "StartFrom"])
             status_msg = paste("merging", Indices[j], "data with translation file...")
             session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
             
