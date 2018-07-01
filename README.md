@@ -12,3 +12,7 @@ Grid Search project:
 3) Setup to adjust current score to opinion calculation
 4) Setup to include additional scores such as : ESG or liquidity 
 5) Setup for portfolio building, such as different weights for outperform, neutral and underperform 
+
+Troubleshooting and debugging:
+1) add module variable
+2) add ability to turn on/off trace

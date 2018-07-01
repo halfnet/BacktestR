@@ -48,7 +48,11 @@ Periods=NULL
 trans=NULL
 scores=NULL
 
+module=""
+
 init_var <- function() {
+    
+    module<<-"init_var"
     
     ########## initialize variables ##########
     params <<- read.csv("parameters.csv")
@@ -118,6 +122,8 @@ init_var <- function() {
 
 # this function loads translation template
 loadtrans <- function(RootFolder) {
+
+    module<<-"loadtrans"
     
     ########## load translation file ##########
     trans = read.xlsx(xlsxFile=paste(RootFolder, "Translation template.xlsx", sep = ""),
@@ -152,6 +158,9 @@ loadtrans <- function(RootFolder) {
 
 # this function returns index level monthly file
 indexlvlmonthlydata <- function(RootFolder, IndexLvlDataFolder) {
+
+    module<<-"indexlvlmonthlydata"
+    
     file.list <- list.files(path=paste(RootFolder, IndexLvlDataFolder, "Monthly", sep=""),
                             pattern='*.csv',
                             full.names=TRUE)
@@ -168,6 +177,9 @@ indexlvlmonthlydata <- function(RootFolder, IndexLvlDataFolder) {
 
 # this function returns index level file
 indexlvldata <- function(RootFolder, IndexLvlDataFolder) {
+    
+    module<<-"indexlvldata"
+    
     file.list <- list.files(path=paste(RootFolder, IndexLvlDataFolder, "BOFA index lvl history", sep=""),
                             pattern='*.xlsx',
                             full.names=TRUE)
@@ -191,6 +203,9 @@ indexlvldata <- function(RootFolder, IndexLvlDataFolder) {
 
 # this function returns index monthly file
 indexmonthlydata <- function(index, RootFolder, IndexDataFolder) {
+    
+    module<<-paste(index, "indexmonthlydata", sep = "-")
+    
     file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "Monthly", sep=""),
                             pattern='*.csv',
                             full.names=TRUE)
@@ -208,6 +223,9 @@ indexmonthlydata <- function(index, RootFolder, IndexDataFolder) {
 
 # this function returns index file
 indexdata <- function(index, RootFolder, IndexDataFolder, StartFrom) {
+    
+    module<<-paste(index, "indexdata", sep = "-")
+    
     file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "BOFA ", index, " index history", sep=""),
                             pattern='*.xlsx',
                             full.names=TRUE)
@@ -248,6 +266,9 @@ indexdata <- function(index, RootFolder, IndexDataFolder, StartFrom) {
 
 # this function returns current holdings file
 ch_data <- function(index, RootFolder, IndexDataFolder, StartFrom) {
+    
+    module<<-paste(index, "ch_data", sep = "-")
+    
     #print(TH.MA)
     file.list <- list.files(path=paste(RootFolder, IndexDataFolder, "CurrentHoldings", sep=""),
                             pattern='*.csv',
@@ -297,6 +318,9 @@ ch_data <- function(index, RootFolder, IndexDataFolder, StartFrom) {
 
 # this function returns the first day of the month
 monthStart <- function(x) {
+
+    module<<-"monthStart"
+    
     x <- as.POSIXlt(x)
     x$mday <- 1
     as.Date(x)
@@ -304,6 +328,8 @@ monthStart <- function(x) {
 
 # this function is one of the 3 score to opinion translation functions
 scoreToOp1 <- function(rf, na0, na1, na2, t0, t1, t2) {
+    module<<-"scoreToOp1"
+    
     ifelse(rf=="Q",
            ifelse(na0>CS.Opinion.NA,-3,
                   ifelse(t0>=9,1,
@@ -324,6 +350,8 @@ scoreToOp1 <- function(rf, na0, na1, na2, t0, t1, t2) {
 
 # this function is one of the 3 score to opinion translation functions
 scoreToOp2 <- function(rf, na0, na1, na2, t0, t1, t2) {
+    module<<-"scoreToOp2"
+    
     ifelse(rf=="Q",
            ifelse(na0>CS.Opinion.NA,-2,
                   ifelse(t0>=9,0,
@@ -343,6 +371,9 @@ scoreToOp2 <- function(rf, na0, na1, na2, t0, t1, t2) {
 
 # this function is one of the 3 score to opinion translation functions
 scoreToOp <- function(df) {
+    
+    module<<-"scoreToOp"
+    
     df = df[order(df$AdjDate),]
     df$M.OP1 = scoreToOp1(df$RF, df$M.NA, df$T1.M.NA, df$T2.M.NA, df$M.SCORE, df$T1.M.SCORE, df$T2.M.SCORE)
     df$M.OP2 = scoreToOp2(df$RF, df$M.NA, df$T1.M.NA, df$T2.M.NA, df$M.SCORE, df$T1.M.SCORE, df$T2.M.SCORE)
@@ -356,6 +387,8 @@ scoreToOp <- function(df) {
 
 # this function turns scores into opinions
 scores2opinions <- function(RootFolder) {
+    
+    module<<-"scores2opinions"
     
     ########## scores to opinions ##########
     transRF = trans[, c("ID_BB_UNIQUE","REPORTING_FREQUENCY")]
@@ -436,6 +469,8 @@ scores2opinions <- function(RootFolder) {
 
 # this function returns index file after joining scores
 indexop <- function(index, ds, CH, CH_OpinionDate) {
+    
+    module<<-paste(index, "indexop", sep = "-")
     
     # joining index file to translation file
     ds2 = ds[, c("Ticker","As.of.Date","PK")]
@@ -526,6 +561,9 @@ indexop <- function(index, ds, CH, CH_OpinionDate) {
 
 # this function returns threshold file
 indexopt <- function(df) {
+    
+    module<<-"indexopt"
+    
     df = df[order(df$Index,df$Date),]
     indexmonths = split(df, paste(df$Index, df$Date))
     
@@ -690,6 +728,9 @@ indexopt <- function(df) {
 
 # this function calc thresholds with optimization logic
 indexth <- function(index, ds) {
+    
+    module<<-paste(index, "indexth", sep = "-")
+    
     ds$Date = as.character(ds$As.of.Date)
     names(ds)[names(ds) == "Index.Name"] = "Index"
     names(ds)[names(ds) == "PrevMend.Mkt...Index.Wght"] = "IndexWght"
@@ -733,6 +774,8 @@ indexth <- function(index, ds) {
 
 # this calc FinalMktWeight for DtS
 dts <- function(df) {
+    
+    module<<-"dts"
     
     df = df[order(-df$Qualify, -df$DtS),]
     
@@ -778,6 +821,9 @@ dts <- function(df) {
 
 # this function limits weight by index month
 limitWeight <- function(df) {
+    
+    module<<-"limitWeight"
+    
     # 1) group by Ticker, calculate sum of ReWeighted2
     # 2) if any ticker with sum of ReWeighted2 > MaxWeightPerName, set it to MaxLimit, 
     #   distribute by CUSIP within that ticker, otherwise DONE
@@ -804,6 +850,9 @@ limitWeight <- function(df) {
 
 
 writeMetrics <- function(fn, final_index_month, index, period_name, period_start, period_end) {
+    
+    module<<-paste(index, "writeMetrics", sep = "-")
+    
     #print(paste(index, period_name, period_start, period_end))
     if (period_name!="ALL") {
         final_index_month = subset(final_index_month, final_index_month$Index.Name == index &
@@ -833,7 +882,8 @@ writeMetrics <- function(fn, final_index_month, index, period_name, period_start
                       p1_err_prod = prod(p1_err_tmp),
                       p1_stdev = sd(p1_trr)*sqrt(12),
                       p1_dndev = sqrt(sum(p1_trrdn*p1_trrdn)*12/n()),
-                      #p1_to = sum(p1_TX+p1_TX2)*12/n(),
+                      p1_buy = sum(p1_buy),
+                      p1_sell = sum(p1_sell),
                       
                       # no transaction cost
                       p1nx_trr_prod = prod(p1nx_trr_tmp),
@@ -862,11 +912,6 @@ writeMetrics <- function(fn, final_index_month, index, period_name, period_start
         final_index$p1nx_sharpe = final_index$p1nx_err/final_index$p1nx_stdev
         final_index$p1nx_sortino = final_index$p1nx_trr/final_index$p1nx_dndev
         
-        # remove unused columns
-        final_index = final_index[, !(colnames(final_index) %in% 
-                                          c("idx_trr_prod", "idx_exr_prod", "idx_err_prod", "idx_stdev", "idx_dndev", 
-                                            "p1_trr_prod", "p1_exr_prod", "p1_err_prod", "p1_stdev", "p1_dndev",
-                                            "p1nx_trr_prod", "p1nx_exr_prod", "p1nx_err_prod", "p1nx_stdev", "p1nx_dndev"))]    
         final_index$period = period_name
         final_index$var_dur = abs(final_index$p1_dur - final_index$idx_dur)/final_index$idx_dur
         final_index$var_asw = abs(final_index$p1_asw - final_index$idx_asw)/final_index$idx_asw
@@ -875,6 +920,15 @@ writeMetrics <- function(fn, final_index_month, index, period_name, period_start
         final_index$var_err = final_index$p1_err - final_index$idx_err
         final_index$var_sharpe = final_index$p1_sharpe - final_index$idx_sharpe
         final_index$var_sortino = final_index$p1_sortino - final_index$idx_sortino
+        
+        final_index$p1_TO = with(final_index, pmin(p1_buy, p1_sell))
+        final_index$p1_TO = with(final_index, p1_TO*12/months)
+        # remove unused columns
+        final_index = final_index[, !(colnames(final_index) %in% 
+                                          c("idx_trr_prod", "idx_exr_prod", "idx_err_prod", "idx_stdev", "idx_dndev", 
+                                            "p1_trr_prod", "p1_exr_prod", "p1_err_prod", "p1_stdev", "p1_dndev", "p1_buy", "p1_sell",
+                                            "p1nx_trr_prod", "p1nx_exr_prod", "p1nx_err_prod", "p1nx_stdev", "p1nx_dndev"))]    
+        
         
         if (!file.exists(fn))
             write.table(final_index, file = fn, sep = ",", col.names = TRUE, row.names = FALSE)
@@ -886,6 +940,8 @@ writeMetrics <- function(fn, final_index_month, index, period_name, period_start
 
 # main backtest data processing function called from UI
 processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
+    
+    module<<-"processData"
     
     RootFolder = RF
     CS.UseFile = CS
@@ -1240,6 +1296,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             G0O1 = indexlvldata(RootFolder, IndexLvlDataFolder)
             G0O1 = subset(G0O1, G0O1$Index=="G0O1")
     
+            module <<- "final_metrics"
+            
             final$IndexCusip = paste(final$Index.Name, final$Cusip, sep = "")
             final$F.OP.CAT = ifelse(final$F.OP==-2|final$F.OP==0, "neutral", 
                                     ifelse(final$F.OP==1, "OutPerform", "UnderPerform"))
@@ -1270,6 +1328,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             final$p1.Op.Chg = ifelse(final$NewCusip==0,ifelse(final$F.OP.CAT!=final$F.OP.CAT.y,1,0),0)
             final$p1_TX = ifelse(final$p1.Op.Chg==1,abs(final$p1_wght-final$p1_wght.y),0) * TransactionCost / 100   #assume price = 100
             final$p1_TX2 = ifelse(final$p1.Op.Chg==1,final$p1_wght-final$p1_wght.y,0) * TransactionCost / 100       #assume price = 100
+            final$p1_buy = (final$p1_TX + final$p1_TX2)/2*100/TransactionCost
+            final$p1_sell = (final$p1_TX - final$p1_TX2)/2*100/TransactionCost
             
             final_index_month = group_by(final, Index.Name, As.of.Date) %>% 
                 summarize(
@@ -1290,10 +1350,12 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
                           p1_dxs = sum(p1_dxs*p1_wght),
                           p1_TX = sum(p1_TX),
                           p1_TX2 = abs(sum(p1_TX2)),
-                          
+                          p1_buy = sum(p1_buy),
+                          p1_sell = sum(p1_sell),
                           # this one last
                           p1_wght = sum(p1_wght)
                 )
+            # turn over
             # link risk free rate
             final_index_month$As.of.Date = as.Date(final_index_month$As.of.Date)
             final_index_month = merge(final_index_month, G0O1[ , c("Date", "TRR...1.month.LOC")], 
@@ -1334,6 +1396,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             final_index_month$p1nx_err = final_index_month$p1nx_trr - final_index_month$TRR...1.month.LOC
             final_index_month$p1nx_err_tmp = 1+final_index_month$p1nx_err/100
     
+            #write.table(final_index_month, file = "temp_metrics.csv", sep = ",", col.names = TRUE, row.names = FALSE)
+            
             fn = paste(RootFolder, "metrics.csv", sep ="")
             if (file.exists(fn)) file.remove(fn)
      
@@ -1357,11 +1421,11 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         result = paste(result_file, "generated successfully. It contains:", nrow(final), "records and took", time_took, "mins.")
         
     }, warning = function(w) {
-        result = paste("warning: ", w)
+        result = paste("warning: @", module, w)
         #traceback(1, max.lines = 1)
         print (result)
     }, error = function(e) {
-        result = paste("error: ", e)
+        result = paste("error: @", module, e)
         #traceback(1, max.lines = 1)
         print (result)
     }, finally = {
@@ -1372,6 +1436,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
 
 checkData <- function(RF, session)
 {
+    module<<-"checkData"
+    
     RootFolder = RF
     DEBUG = FALSE
 
@@ -1425,7 +1491,7 @@ checkData <- function(RF, session)
             
             # missing translation
             # joining index file to translation file
-            ds = ds[, c("Ticker","As.of.Date","Cusip","ISIN.number","Bond.Name", "ISO.Country","ML.Industry.Lvl.3","ML.Industry.Lvl.4")]
+            ds = ds[, c("Cusip","ISIN.number","Bond.Name", "Ticker", "ISO.Country","ML.Industry.Lvl.3","ML.Industry.Lvl.4", "As.of.Date")]
             ds$Index.Name = Indices[j]
             ds = merge(ds, trans[ , c("Bond.Ticker","FROM.DATE.LINK","TO.DATE.LINK","ID_BB_UNIQUE")], 
                         by.x="Ticker", by.y="Bond.Ticker", all.x=TRUE)
@@ -1435,6 +1501,8 @@ checkData <- function(RF, session)
             ds = ds[, !(colnames(ds) %in% c("FROM.DATE.LINK","TO.DATE.LINK","ID_BB_UNIQUE"))]
             # remove duplicates
             ds = ds %>% distinct(Ticker,Cusip,ISIN.number,Bond.Name, .keep_all = TRUE)
+            # re-sequence columns
+            ds = ds[, c("Cusip","ISIN.number","Bond.Name", "Ticker", "ISO.Country","ML.Industry.Lvl.3","ML.Industry.Lvl.4", "As.of.Date", "Index.Name")]
             if (j==1) {
                 write.table(ds, file = paste(RootFolder, "MissingTranslation.csv", sep =""), sep = ",", col.names = TRUE, row.names = FALSE)
             }
@@ -1450,10 +1518,10 @@ checkData <- function(RF, session)
         result = paste(result_file, "generated successfully and took", time_took, "mins.")
         
     }, warning = function(w) {
-        result = paste("warning: ", w)
+        result = paste("warning: @", module, w)
         print (result)
     }, error = function(e) {
-        result = paste("error: ", e)
+        result = paste("error: @", module, e)
         print (result)
     }, finally = {
         
