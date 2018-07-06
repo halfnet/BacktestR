@@ -848,13 +848,13 @@ limitWeight <- function(df) {
     return (df)
 }
 
-
-writeMetrics <- function(fn, final_index_month, index, period_name, period_start, period_end) {
+# this function writes metrics to a file for a given index and period
+writeMetrics <- function(fn, final_index_month, index, period_name, period_start, period_end, gs_params) {
     
     module<<-paste(index, "writeMetrics", sep = "-")
     
     #print(paste(index, period_name, period_start, period_end))
-    if (period_name!="ALL") {
+    if (!grepl("ALL", period_name)) {
         final_index_month = subset(final_index_month, final_index_month$Index.Name == index &
                                    final_index_month$As.of.Date>=period_start & final_index_month$As.of.Date<period_end)
     } else {
@@ -929,12 +929,454 @@ writeMetrics <- function(fn, final_index_month, index, period_name, period_start
                                             "p1_trr_prod", "p1_exr_prod", "p1_err_prod", "p1_stdev", "p1_dndev", "p1_buy", "p1_sell",
                                             "p1nx_trr_prod", "p1nx_exr_prod", "p1nx_err_prod", "p1nx_stdev", "p1nx_dndev"))]    
         
+        if (!is.null(nrow(gs_params))) final_index = cbind(final_index, gs_params)
         
         if (!file.exists(fn))
             write.table(final_index, file = fn, sep = ",", col.names = TRUE, row.names = FALSE)
         else
             write.table(final_index, file = fn, sep = ",", col.names = FALSE, row.names = FALSE, append = TRUE)
     }
+    
+}
+
+# this function does a grid search for optimal
+gridSearch <- function(RF, CMPM, session,
+                       CS.Opinion.NA.Min, CS.Opinion.NA.Max, CS.Opinion.NA.Step, 
+                       CS.TableOption.Min, CS.TableOption.Max, CS.TableOption.Step,
+                       TH.MA.Min, TH.MA.Max, TH.MA.Step,
+                       TH.MinWght.Min, TH.MinWght.Max, TH.MinWght.Step,
+                       OutPerformMultiple.Min, OutPerformMultiple.Max, OutPerformMultiple.Step) 
+{
+    module<<-"gridSearch"
+    
+    RootFolder = RF
+    start_time = Sys.time()
+    fn = paste(RootFolder, "gridsearch.csv", sep ="")
+    if (file.exists(fn)) file.remove(fn)
+    
+    trans <<- loadtrans(RootFolder)
+    
+    for (i in seq(CS.Opinion.NA.Min, CS.Opinion.NA.Max, CS.Opinion.NA.Step)) {
+        for (j in seq(CS.TableOption.Min, CS.TableOption.Max, CS.TableOption.Step)) {
+            for (k in seq(TH.MA.Min, TH.MA.Max, TH.MA.Step)) {
+                for (l in seq(TH.MinWght.Min, TH.MinWght.Max, TH.MinWght.Step)) {
+                    for (m in seq(OutPerformMultiple.Min, OutPerformMultiple.Max, OutPerformMultiple.Step)) {
+                        print (paste(i, j, k, l, m))     
+                        generateMetrics(RF, CMPM, session, fn, i, j, k, l, m)
+                    }
+                }
+            }
+        }
+    }
+    end_time = Sys.time()
+    time_took = as.numeric(difftime(end_time, start_time, units=("mins")))
+    time_took = format(round(time_took, 1), nsmall = 1)
+    result = paste("grid search completed, it took", time_took, "mins.")
+    return (result)
+}
+
+# generate metrics given input parameters
+generateMetrics <- function(RF, CMPM, session, fn, Opinion.NA, TableOption, MA, MinWght, Multiple) {
+    
+    module<<-"processData"
+    
+    RootFolder = RF
+    # 1 = MV%, 2 = DtS, 3 = DtS Cash
+    ConstructModelPortMethod = CMPM
+    
+    DEBUG = FALSE
+    
+    if (DEBUG) {
+        RootFolder = "C:/MyProjects/Guru/BacktestR/"
+        IndexDataFolder = "Bond raw data/Index constituents/"
+        IndexLvlDataFolder = "Bond raw data/Index lvl data/"
+        ConstructModelPortMethod = 1
+        TH.MA = 6
+    }
+    
+    ############################################################################################################
+    ##########################   MAIN CODE STARTS HERE!!!   ####################################################
+    ############################################################################################################
+    result = ""
+    status_msg = ""
+    status_obj = "OPT_status"
+    final = data.frame(matrix(ncol=0,nrow=0))
+    
+    tryCatch({
+        init_var()
+        
+        # override variable parameters
+        CS.Opinion.NA <<- Opinion.NA
+        CS.TableOption <<- TableOption
+        TH.MA <<- MA
+        TH.MinWght <<- MinWght
+        OutPerformMultiple <<- Multiple
+        gs = paste(Opinion.NA, TableOption, MA, MinWght, Multiple, sep = "-")
+        
+        
+        status_msg = "calculating company opinions..."
+        status_msg = paste(gs, status_msg, sep = "-")
+        session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+        scores <<- scores2opinions(RootFolder)
+
+        ########## load index file ##########
+        for (j in 1:length(Indices)) {
+            if (DEBUG) {
+                j = 1
+            }
+            StartFrom = as.Date(TH.Limits[TH.Limits$Indices==Indices[j], "StartFrom"])
+            status_msg = paste("merging", Indices[j], "data with company opinions...")
+            status_msg = paste(gs, status_msg, sep = "-")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            
+            ds = indexdata(Indices[j], RootFolder, IndexDataFolder, StartFrom)
+            ds = indexop(Indices[j], ds, 0, NA)
+            
+            # calculate thresholds
+            status_msg = paste("calculating", Indices[j], "thresholds...")
+            status_msg = paste(gs, status_msg, sep = "-")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            th = indexth(Indices[j], ds)
+            
+            # Merge with threshold and determine F.OP
+            status_msg = paste("merging", Indices[j], "with thresholds...")
+            status_msg = paste(gs, status_msg, sep = "-")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            
+            ds = merge(ds, th[,c("Index", "Date", "BuyASWCutOff", "BuyASWMax", "BuyDurationCutOff", "BuyDurationMax", "HoldASWCutOff", "HoldASWMax", "HoldDurationCutOff", "HoldDurationMax")], 
+                       by.x=c("Index.Name", "As.of.Date"), by.y=c("Index", "Date"), all.x=TRUE)
+            ds$F.OP = ifelse(ds$M.OP==-4 | ds$M.OP==-3 | ds$M.OP==-1,ds$M.OP,
+                             ifelse((ds$M.OP==-2 | ds$M.OP==-0) & ds$M.FORMULA_11>=HoldM.RatioCutOff 
+                                    & ds$PrevMend.AssetSwp >= ds$HoldASWCutOff & ds$PrevMend.AssetSwp <= ds$HoldASWMax
+                                    & ds$PrevMend.Mod.Dur.To.Worst >= ds$HoldDurationCutOff & ds$PrevMend.Mod.Dur.To.Worst <= ds$HoldDurationMax
+                                    & (TScoreHoldFilter == 0 | ds$T.SCORE >= TScoreCutOff | ds$T.NA > TScoreNA),
+                                    ds$M.OP,
+                                    ifelse(ds$M.OP==1 & ds$M.FORMULA_11>=BuyM.RatioCutOff
+                                           & ds$PrevMend.AssetSwp >= ds$BuyASWCutOff & ds$PrevMend.AssetSwp <= ds$BuyASWMax
+                                           & ds$PrevMend.Mod.Dur.To.Worst >= ds$BuyDurationCutOff & ds$PrevMend.Mod.Dur.To.Worst <= ds$BuyDurationMax
+                                           & (TScoreBuyFilter == 0 | ds$T.SCORE >= TScoreCutOff | ds$T.NA > TScoreNA),
+                                           ds$M.OP,ds$M.OP-100)))
+            
+            # remove columns no longer required to reduce memory usage
+            ds = ds[, !(colnames(ds) %in% c("rn","BuyASWCutOff", "BuyASWMax", "BuyDurationCutOff", "BuyDurationMax", 
+                                            "HoldASWCutOff", "HoldASWMax", "HoldDurationCutOff", "HoldDurationMax"))]
+            
+            # add additional columns
+            ds$Investment.Date = as.mondate(ds$As.of.Date)-1
+            ds$IndexDate = paste(ds$Index.Name, ds$As.of.Date)
+            ds$IndexTickerDate = paste(ds$Index.Name, ds$Ticker, ds$As.of.Date)
+            ds$ModifiedMktWeight = ifelse(ds$F.OP==1, ds$PrevMend.Mkt...Index.Wght*OutPerformMultiple,
+                                          ifelse(ds$F.OP==0 | ds$F.OP==-2,ds$PrevMend.Mkt...Index.Wght,0))
+            ds$FinalMktWeight = 0
+            
+            ########## MV%/DtS/DtS Cash ##########
+            status_msg = paste("calculating portfolio weight for", Indices[j], "...")
+            status_msg = paste(gs, status_msg, sep = "-")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            
+            ds$DtS = ds$PrevMend.Mod.Dur.To.Worst*ds$PrevMend.AssetSwp
+            ds$WghtDtS = ds$PrevMend.Mkt...Index.Wght*ds$DtS
+            ds$Qualify = ifelse(((ds$F.OP==1|ds$F.OP==0|ds$F.OP==-2) & ds$DtS>0),1,0)
+            ds$QualifyDtS = ifelse(ds$Qualify==1,ds$DtS,0)
+            ds$temp = 1
+            ds$NumOfBonds = ave(ds$temp, ds$IndexTickerDate, FUN=sum)
+            ds$TotalTicker = ave(ds$PrevMend.Mkt...Index.Wght, ds$IndexTickerDate, FUN=sum)
+            ds$TotalWghtDtS = ave(ds$WghtDtS, ds$IndexTickerDate, FUN=sum)
+            ds$NumQualify = ave(ds$Qualify, ds$IndexTickerDate, FUN=sum)
+            ds$MaxDtS = ave(ds$QualifyDtS, ds$IndexTickerDate, FUN=max)
+            ds$Qualify[ds$TotalWghtDtS<=0] = 0
+            ds$AvgWghtDtSTicker = ifelse(ds$TotalTicker>0,ds$TotalWghtDtS/ds$TotalTicker,0)
+            ds$EfficientDtS = ifelse(ds$AvgWghtDtSTicker>0,ds$DtS/ds$AvgWghtDtSTicker,0)
+            ds[c("DtSPHold", "DtSPBuy", "DtSPHoldDiff", "DtSPBuyDiff")] <- NA
+            
+            if (ConstructModelPortMethod == 1) {
+                # MV%
+                ds$FinalMktWeight = ds$ModifiedMktWeight
+            } else if (ConstructModelPortMethod >= 2) {
+                # DtS
+                # handling simple cases here for efficiency
+                ds$FinalMktWeight = ifelse((ds$NumOfBonds<=3 & ds$DtS==ds$MaxDtS & ds$Qualify==1) | (ds$NumQualify==1 & ds$Qualify==1),
+                                           ifelse(ds$M.OP==1,
+                                                  ifelse(ds$EfficientDtS==0,0,OutPerformMultiple*ds$TotalTicker/ds$EfficientDtS),
+                                                  ifelse(ds$M.OP==0 | ds$M.OP==-2,ifelse(ds$EfficientDtS==0,0,ds$TotalTicker/ds$EfficientDtS),
+                                                         ds$FinalMktWeight)),
+                                           ds$FinalMktWeight)
+                
+                # create an empty dts dataframe with same structure of ds
+                ds$DtSPHold = NA
+                ds$DtSPBuy = NA
+                ds$DtSPHoldDiff = NA
+                ds$DtSPBuyDiff = NA
+                dts_output1=subset(ds, ds$NumQualify>1 & ds$NumOfBonds>3 & ds$TotalTicker>0)
+                dts_output2=subset(ds, ds$NumQualify<=1 | ds$NumOfBonds<=3 | ds$TotalTicker<=0)
+                # destory ds
+                rm(ds)
+                gc()
+                dts_list = dts_output1 %>% split(f=dts_output1$IndexTickerDate)
+                dts_list = lapply(dts_list, dts)
+                dts_output1 = do.call(rbind,dts_list)
+                ds = rbind(dts_output2, dts_output1)
+                # destory dts_output1 & 2
+                rm(dts_output1)
+                rm(dts_output2)
+                rm(dts_list)
+                gc()
+                
+                if (ConstructModelPortMethod == 3) {
+                    # DtS Cash
+                    # group by IndexTickerDate
+                    # TickerModelWeight = sum(FinalMktWeight)
+                    # TickerIndexWeight = sum(PrevMend.Mkt...Index.Wght)
+                    # TickerOpinion = max(F.OP)
+                    ds_cash = group_by(ds,Index.Name, Ticker, As.of.Date) %>% 
+                        summarize(TickerModelWeight = sum(FinalMktWeight),
+                                  TickerIndexWeight = sum(PrevMend.Mkt...Index.Wght),
+                                  TickerOpinion = max(F.OP))
+                    ds_cash$TickerCashWeight = ifelse(ds_cash$TickerOpinion==1,
+                                                      ds_cash$TickerIndexWeight*OutPerformMultiple-ds_cash$TickerModelWeight,
+                                                      ifelse(ds_cash$TickerOpinion==0 | ds_cash$TickerOpinion==-2,
+                                                             ds_cash$TickerIndexWeight-ds_cash$TickerModelWeight,0))
+                    ds_cash = group_by(ds_cash,Index.Name,As.of.Date) %>% 
+                        summarize(FinalMktWeight = sum(TickerCashWeight))
+                    ds_cash$FinalMktWeight[ds_cash$FinalMktWeight<0]=0
+                    
+                    morecols = colnames(ds)[!(colnames(ds) %in% c("Index.Name","As.of.Date","FinalMktWeight"))]
+                    ds_cash[morecols] <- NA
+                    ds_cash$PK=paste(ds_cash$Index.Name, "CASH", ds_cash$As.of.Date, sep="")
+                    ds_cash$Investment.Date=as.mondate(ds_cash$As.of.Date)-1
+                    ds_cash$Ticker="CASH"
+                    ds_cash$Cusip="CASH"
+                    ds_cash$ISIN.number="CASH"
+                    ds_cash$IndexDate = paste(ds_cash$Index.Name, ds_cash$As.of.Date)
+                    ds_cash$IndexTickerDate = paste(ds_cash$Index.Name, ds_cash$Ticker, ds_cash$As.of.Date)
+                    ds_cash$PrevMend.Mkt...Index.Wght=0
+                    ds_cash$PrevMend.Mod.Dur.To.Worst=0
+                    ds_cash$PrevMend.AssetSwp=0
+                    ds_cash$PrevMend.Price=100
+                    ds_cash$TRR...MTD.LOC=0
+                    ds_cash$Excess.Rtn...MTD=0
+                    ds_cash$Semi.Mod.Dur.To.Worst=0
+                    ds_cash$Asset.Swap=0
+                    ds_cash$M.SCORE=10
+                    ds_cash$M.NA=0
+                    ds_cash$T.SCORE=10
+                    ds_cash$T.NA=0
+                    ds_cash$L.SCORE=10
+                    ds_cash$L.NA=0
+                    ds_cash$M.FORMULA_11=1
+                    ds_cash$M.OP=-100
+                    ds_cash$C.OP=-100
+                    ds_cash$F.OP=-100
+                    ds_cash$ModifiedMktWeight=0
+                    ds_cash$DtS=0
+                    ds_cash$WghtDtS=0
+                    ds_cash$Qualify=0
+                    ds_cash$QualifyDtS=0
+                    ds_cash$temp=1
+                    ds_cash$NumOfBonds=0
+                    ds_cash$TotalTicker=0
+                    ds_cash$TotalWghtDtS=0
+                    ds_cash$NumQualify=0
+                    ds_cash$MaxDtS=0
+                    ds_cash$AvgWghtDtSTicker=0
+                    ds_cash$EfficientDtS=0
+                    # convert to data.frame before rbind
+                    ds_cash = data.frame(ds_cash)
+                    ds=rbind(ds, ds_cash)
+                }
+                
+            } 
+            
+            # remove columns no longer required to reduce memory usage
+            ds = ds[, !(colnames(ds) %in% c("QualifyDtS", "temp", "MaxDtS"))]
+            
+            ########## limit max weight per name ##########
+            status_msg = paste("limiting portfolio weight for", Indices[j], "...")
+            status_msg = paste(gs, status_msg, sep = "-")
+            session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+            
+            
+            ds$TotalMonthMktWgt = ave(ds$FinalMktWeight, ds$IndexDate, FUN=sum)
+            ds$ReWeighted = ifelse(ds$TotalMonthMktWgt==0, 0, ds$FinalMktWeight*100/ds$TotalMonthMktWgt)
+            ds$TickerWeight = ave(ds$ReWeighted, ds$IndexTickerDate, FUN=sum)
+            ds$TickerWeight = ifelse(ds$TickerWeight>MaxWeightPerName,MaxWeightPerName/ds$TickerWeight,1)
+            ds$ReWeighted = ds$ReWeighted*ds$TickerWeight
+            ds$TotalMonthMktWgt2 = ave(ds$ReWeighted, ds$IndexDate, FUN=sum)
+            ds$ReWeighted2 = ifelse(ds$TotalMonthMktWgt2==0, 0, ds$ReWeighted*100/ds$TotalMonthMktWgt2)
+            ds$TickerWeight = 0
+                
+            df = ds %>% split(f=ds$IndexDate)
+            df = lapply(df, limitWeight)
+            output = do.call(rbind,df)
+
+            # destory ds
+            rm(ds)
+            gc()
+            
+            # setting up for dynamic update for powerpivot
+            names(output)[names(output) == "PrevMend.Mkt...Index.Wght"] = "Orig.PrevMend.Mkt...Index.Wght"
+            output$PrevMend.Mkt...Index.Wght=ifelse(output$F.OP==1,output$ReWeighted2/OutPerformMultiple,output$ReWeighted2)
+
+            output = output[, !(colnames(output) %in% c("TickerWeight", "IndexDate", "IndexTickerDate"))]
+            
+            
+            if (nrow(final)==0) {
+                # create an empty final dataframe with same structure of output
+                final = output[0,]
+            }
+            final=rbind(final, output)
+            
+            # destory output
+            rm(output)
+            gc()
+        }
+        
+        ########## final touches ##########
+        final = final[order(final$PK),]
+        final$Index = seq.int(nrow(final))
+        final$Excess.Rtn...MTD = ifelse(is.na(final$Excess.Rtn...MTD),0,final$Excess.Rtn...MTD)
+        
+
+        status_msg = paste("calculating final metrics...")
+        status_msg = paste(gs, status_msg, sep = "-")
+        session$sendCustomMessage(type = 'print', message = list(selector = status_obj, html = status_msg))
+        
+        
+        G0O1 = indexlvldata(RootFolder, IndexLvlDataFolder)
+        G0O1 = subset(G0O1, G0O1$Index=="G0O1")
+        
+        module <<- "final_metrics_prep"
+        
+        final$IndexCusip = paste(final$Index.Name, final$Cusip, sep = "")
+        final$F.OP.CAT = ifelse(final$F.OP==-2|final$F.OP==0, "neutral", 
+                                ifelse(final$F.OP==1, "OutPerform", "UnderPerform"))
+        final$DxS = final$PrevMend.Mod.Dur.To.Worst*final$PrevMend.AssetSwp
+        
+        
+        # p1
+        final$p1 = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, 1,0)
+        final$p1_trr = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$TRR...MTD.LOC,0)
+        final$p1_exr = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$Excess.Rtn...MTD,0)
+        final$p1_wght = final$ReWeighted2
+        final$p1_dur = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$PrevMend.Mod.Dur.To.Worst,0)
+        final$p1_asw = ifelse(final$F.OP==-2|final$F.OP==0|final$F.OP==1, final$PrevMend.AssetSwp,0)
+        final$p1_dxs = final$p1_dur*final$p1_asw
+        
+        
+        final$Index1 = final$Index + 1
+        final = merge(final, final[ , c("Index1","IndexCusip", "F.OP.CAT", "p1_wght")],
+                      by.x="Index", by.y="Index1", all.x=TRUE)
+        
+        names(final)[names(final) == "IndexCusip.x"] = "IndexCusip"
+        names(final)[names(final) == "F.OP.CAT.x"] = "F.OP.CAT"
+        names(final)[names(final) == "p1_wght.x"] = "p1_wght"
+        final$IndexCusip.y[1]="NONE"
+        final$F.OP.CAT.y[1]="NONE"
+        final$NewCusip = ifelse(final$IndexCusip==final$IndexCusip.y,0,1)
+        final$F.OP.CAT.y = ifelse(final$NewCusip==1, "NONE", final$F.OP.CAT.y)
+        final$p1.Op.Chg = ifelse(final$NewCusip==0,ifelse(final$F.OP.CAT!=final$F.OP.CAT.y,1,0),0)
+        final$p1_TX = ifelse(final$p1.Op.Chg==1,abs(final$p1_wght-final$p1_wght.y),0) * TransactionCost / 100   #assume price = 100
+        final$p1_TX2 = ifelse(final$p1.Op.Chg==1,final$p1_wght-final$p1_wght.y,0) * TransactionCost / 100       #assume price = 100
+        final$p1_buy = (final$p1_TX + final$p1_TX2)/2*100/TransactionCost
+        final$p1_sell = (final$p1_TX - final$p1_TX2)/2*100/TransactionCost
+        
+        final_index_month = group_by(final, Index.Name, As.of.Date) %>% 
+            summarize(
+                # index
+                idx_obs = n(),
+                idx_trr = sum(TRR...MTD.LOC*Orig.PrevMend.Mkt...Index.Wght),
+                idx_exr = sum(Excess.Rtn...MTD*Orig.PrevMend.Mkt...Index.Wght),
+                idx_dur = sum(PrevMend.Mod.Dur.To.Worst*Orig.PrevMend.Mkt...Index.Wght),
+                idx_asw = sum(PrevMend.AssetSwp*Orig.PrevMend.Mkt...Index.Wght),
+                idx_dxs = sum(DxS*Orig.PrevMend.Mkt...Index.Wght),
+                idx_wght = sum(Orig.PrevMend.Mkt...Index.Wght),
+                # p1
+                p1_obs = sum(p1),
+                p1nx_trr = sum(p1_trr*p1_wght),
+                p1nx_exr = sum(p1_exr*p1_wght),
+                p1_dur = sum(p1_dur*p1_wght),
+                p1_asw = sum(p1_asw*p1_wght),
+                p1_dxs = sum(p1_dxs*p1_wght),
+                p1_TX = sum(p1_TX),
+                p1_TX2 = abs(sum(p1_TX2)),
+                p1_buy = sum(p1_buy),
+                p1_sell = sum(p1_sell),
+                # this one last
+                p1_wght = sum(p1_wght)
+            )
+        # turn over
+        # link risk free rate
+        final_index_month$As.of.Date = as.Date(final_index_month$As.of.Date)
+        final_index_month = merge(final_index_month, G0O1[ , c("Date", "TRR...1.month.LOC")], 
+                                  by.x="As.of.Date", by.y="Date", all.x=TRUE)
+        
+        # index metrics
+        final_index_month$idx_trr = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_trr/final_index_month$idx_wght)
+        final_index_month$idx_trr_tmp = 1+final_index_month$idx_trr/100
+        final_index_month$idx_exr = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_exr/final_index_month$idx_wght)
+        final_index_month$idx_exr_tmp = 1+final_index_month$idx_exr/100
+        final_index_month$idx_dur = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_dur/final_index_month$idx_wght)
+        final_index_month$idx_asw = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_asw/final_index_month$idx_wght)
+        final_index_month$idx_dxs = ifelse(final_index_month$idx_wght==0,0,final_index_month$idx_dxs/final_index_month$idx_wght)
+        final_index_month$idx_trrdn = ifelse(final_index_month$idx_trr>0,0,final_index_month$idx_trr)
+        final_index_month$idx_err = final_index_month$idx_trr - final_index_month$TRR...1.month.LOC
+        final_index_month$idx_err_tmp = 1+final_index_month$idx_err/100
+        
+        # port1 metrics
+        final_index_month$p1_dur = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_dur/final_index_month$p1_wght)
+        final_index_month$p1_asw = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_asw/final_index_month$p1_wght)
+        final_index_month$p1_dxs = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1_dxs/final_index_month$p1_wght)
+        # transaction cost
+        final_index_month$p1_trr = ifelse(final_index_month$p1_wght==0,0,
+                                          final_index_month$p1nx_trr/final_index_month$p1_wght-final_index_month$p1_TX-final_index_month$p1_TX2)
+        final_index_month$p1_trr_tmp = 1+final_index_month$p1_trr/100
+        final_index_month$p1_exr = ifelse(final_index_month$p1_wght==0,0,
+                                          final_index_month$p1nx_exr/final_index_month$p1_wght-final_index_month$p1_TX-final_index_month$p1_TX2)
+        final_index_month$p1_exr_tmp = 1+final_index_month$p1_exr/100
+        final_index_month$p1_trrdn = ifelse(final_index_month$p1_trr>0,0,final_index_month$p1_trr)
+        final_index_month$p1_err = final_index_month$p1_trr - final_index_month$TRR...1.month.LOC
+        final_index_month$p1_err_tmp = 1+final_index_month$p1_err/100
+        # no transaction cost
+        final_index_month$p1nx_trr = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1nx_trr/final_index_month$p1_wght)
+        final_index_month$p1nx_trr_tmp = 1+final_index_month$p1nx_trr/100
+        final_index_month$p1nx_exr = ifelse(final_index_month$p1_wght==0,0,final_index_month$p1nx_exr/final_index_month$p1_wght)
+        final_index_month$p1nx_exr_tmp = 1+final_index_month$p1nx_exr/100
+        final_index_month$p1nx_trrdn = ifelse(final_index_month$p1nx_trr>0,0,final_index_month$p1nx_trr)
+        final_index_month$p1nx_err = final_index_month$p1nx_trr - final_index_month$TRR...1.month.LOC
+        final_index_month$p1nx_err_tmp = 1+final_index_month$p1nx_err/100
+        
+        #write.table(final_index_month, file = "temp_metrics.csv", sep = ",", col.names = TRUE, row.names = FALSE)
+        
+        module <<- "final_metrics"
+        
+        gs_params = setNames(data.frame(matrix(ncol = 5, nrow = 0)), 
+                             c("CS.Opinion.NA", "CS.TableOption", "TH.MA", "TH.MinWght", "Multiple"))
+        gs_params[1,] = list(Opinion.NA,TableOption, MA, MinWght, Multiple)
+        for (i in 1:nrow(Periods)) {
+            period = Periods[i,]
+            writeMetrics(fn, final_index_month, 
+                         as.character(period$Indices), 
+                         as.character(period$Name), 
+                         as.character(period$Start), 
+                         as.character(period$End),
+                         gs_params)
+        }
+        
+        ####
+        # END: calculate final metrics
+        ####
+        
+        
+        
+    }, warning = function(w) {
+        result = paste("warning: @", module, w)
+        print (result)
+    }, error = function(e) {
+        result = paste("error: @", module, e)
+        print (result)
+    }, finally = {
+        
+    })   
     
 }
 
@@ -1296,7 +1738,7 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
             G0O1 = indexlvldata(RootFolder, IndexLvlDataFolder)
             G0O1 = subset(G0O1, G0O1$Index=="G0O1")
     
-            module <<- "final_metrics"
+            module <<- "final_metrics_prep"
             
             final$IndexCusip = paste(final$Index.Name, final$Cusip, sep = "")
             final$F.OP.CAT = ifelse(final$F.OP==-2|final$F.OP==0, "neutral", 
@@ -1398,6 +1840,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
     
             #write.table(final_index_month, file = "temp_metrics.csv", sep = ",", col.names = TRUE, row.names = FALSE)
             
+            module <<- "final_metrics"
+            
             fn = paste(RootFolder, "metrics.csv", sep ="")
             if (file.exists(fn)) file.remove(fn)
      
@@ -1407,7 +1851,8 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
                              as.character(period$Indices), 
                              as.character(period$Name), 
                              as.character(period$Start), 
-                             as.character(period$End))
+                             as.character(period$End),
+                             NA)
             }
             
             ####
@@ -1422,11 +1867,9 @@ processData <- function(RF, CS, TH, CMP, CMPM, CH, CH_OpinionDate, session) {
         
     }, warning = function(w) {
         result = paste("warning: @", module, w)
-        #traceback(1, max.lines = 1)
         print (result)
     }, error = function(e) {
         result = paste("error: @", module, e)
-        #traceback(1, max.lines = 1)
         print (result)
     }, finally = {
         

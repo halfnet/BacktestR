@@ -223,15 +223,11 @@ ui <- tagList(
                ),
                tabPanel(title = "Optimization",
                         fluidRow(
-                            column(4, 
-                                   actionButton(inputId = "OPT_opinion", 
-                                                label = "Optimize Opinions")
+                            column(2, 
+                                   actionButton(inputId = "OPT_gridsearch", 
+                                                label = "Grid Search")
                             ),
-                            column(4, 
-                                   actionButton(inputId = "OPT_threshold", 
-                                                label = "Optimize Thresholds")
-                            ),
-                            column(4, 
+                            column(10, 
                                    textOutput("OPT_status")
                             )
                         ),
@@ -255,7 +251,7 @@ ui <- tagList(
                                                 value = 1),
                                    numericInput(inputId = "CS.TableOption.Max", 
                                                 label = "CS.TableOption.Max",
-                                                value = 3),
+                                                value = 4),
                                    numericInput(inputId = "CS.TableOption.Step", 
                                                 label = "CS.TableOption.Step",
                                                 value = 1)
@@ -264,13 +260,13 @@ ui <- tagList(
                                    helpText("Threshold Parameters:"),
                                    numericInput(inputId = "TH.MA.Min", 
                                                 label = "TH.MA.Min",
-                                                value = 2),
+                                                value = 3),
                                    numericInput(inputId = "TH.MA.Max", 
                                                 label = "TH.MA.Max",
                                                 value = 12),
                                    numericInput(inputId = "TH.MA.Step", 
                                                 label = "TH.MA.Step",
-                                                value = 2),
+                                                value = 3),
                                    numericInput(inputId = "TH.MinWght.Min", 
                                                 label = "TH.MinWght.Min",
                                                 value = 40),
@@ -279,9 +275,20 @@ ui <- tagList(
                                                 value = 60),
                                    numericInput(inputId = "TH.MinWght.Step", 
                                                 label = "TH.MinWght.Step",
-                                                value = 5)
+                                                value = 10)
+                            ),
+                            column(4, 
+                                   helpText("Multiplier Parameters:"),
+                                   numericInput(inputId = "OutPerformMultiple.Min", 
+                                                label = "OutPerformMultiple.Min",
+                                                value = 3),
+                                   numericInput(inputId = "OutPerformMultiple.Max", 
+                                                label = "OutPerformMultiple.Max",
+                                                value = 6),
+                                   numericInput(inputId = "OutPerformMultiple.Step", 
+                                                label = "OutPerformMultiple.Step",
+                                                value = 1)
                             )
-                            
                             
                         )
                ),
@@ -331,8 +338,10 @@ server <- function(input, output, session) {
     
     
     rv <- reactiveValues(
-        status = "ready",
-        CH_status = "ready",
+        status = "",
+        CH_status = "",
+        DC_status = "",
+        OPT_status = "",
         ### delete 3 lines below ###
         norm = rnorm(500), 
         unif = runif(500),
@@ -436,6 +445,20 @@ server <- function(input, output, session) {
         )
     })
     
+
+    #************* grid search ***********#
+    observeEvent(input$OPT_gridsearch, {
+        disable("OPT_gridsearch")
+        session$sendCustomMessage(type = 'print', message = list(selector = 'OPT_status', html = "processing..."))
+        result = gridSearch(input$RootFolder, input$ConstructModelPortMethod, session,
+                            input$CS.Opinion.NA.Min, input$CS.Opinion.NA.Max, input$CS.Opinion.NA.Step, 
+                            input$CS.TableOption.Min, input$CS.TableOption.Max, input$CS.TableOption.Step,
+                            input$TH.MA.Min, input$TH.MA.Max, input$TH.MA.Step,
+                            input$TH.MinWght.Min, input$TH.MinWght.Max, input$TH.MinWght.Step,
+                            input$OutPerformMultiple.Min, input$OutPerformMultiple.Max, input$OutPerformMultiple.Step) 
+        session$sendCustomMessage(type = 'print', message = list(selector = 'OPT_status', html = result))
+        enable("OPT_gridsearch")
+    })
     
     #************* to be deleted after this ***********#
     
