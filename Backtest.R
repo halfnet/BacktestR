@@ -440,7 +440,7 @@ server <- function(input, output, session) {
     #************* gather all inputs besides tables ***********#
     AllInputs <- reactive({
         x <- reactiveValuesToList(input)
-        x <- x[names(x)!="indices" & names(x)!="periods"]
+        x <- x[names(x)!="indices" & names(x)!="periods" & names(x)!="variables"]
         data.frame(
             name = names(x),
             value = unlist(x, use.names = FALSE)
