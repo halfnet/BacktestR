@@ -57,7 +57,7 @@ init_var <- function() {
     ########## initialize variables ##########
     params <<- read.csv("parameters.csv")
     TH.Limits <<- read.csv("indices.csv")
-    TH.Limits <<- subset(TH.Limits, TH.Limits$Include==1)
+    TH.Limits <<- subset(TH.Limits, TH.Limits$Include)
     for(i in 1:nrow(TH.Limits)) {
         if (grepl("-", TH.Limits$StartFrom[i])) {
             TH.Limits$StartFrom = as.Date(TH.Limits$StartFrom, "%Y-%m-%d")
@@ -940,12 +940,7 @@ writeMetrics <- function(fn, final_index_month, index, period_name, period_start
 }
 
 # this function does a grid search for optimal
-gridSearch <- function(RF, CMPM, session,
-                       CS.Opinion.NA.Min, CS.Opinion.NA.Max, CS.Opinion.NA.Step, 
-                       CS.TableOption.Min, CS.TableOption.Max, CS.TableOption.Step,
-                       TH.MA.Min, TH.MA.Max, TH.MA.Step,
-                       TH.MinWght.Min, TH.MinWght.Max, TH.MinWght.Step,
-                       OutPerformMultiple.Min, OutPerformMultiple.Max, OutPerformMultiple.Step) 
+gridSearch <- function(RF, CMPM, session) 
 {
     module<<-"gridSearch"
     
@@ -954,7 +949,65 @@ gridSearch <- function(RF, CMPM, session,
     fn = paste(RootFolder, "gridsearch.csv", sep ="")
     if (file.exists(fn)) file.remove(fn)
     
+    init_var()
     trans <<- loadtrans(RootFolder)
+
+    variables = read.csv("variables.csv")    
+    
+    CS.Opinion.NA.Enabled = variables[variables$Variables=="CS.Opinion.NA",]$Enabled
+    if (CS.Opinion.NA.Enabled) {
+        CS.Opinion.NA.Min = variables[variables$Variables=="CS.Opinion.NA",]$Min
+        CS.Opinion.NA.Max = variables[variables$Variables=="CS.Opinion.NA",]$Max
+        CS.Opinion.NA.Step = variables[variables$Variables=="CS.Opinion.NA",]$Step
+    } else {
+        CS.Opinion.NA.Min = CS.Opinion.NA
+        CS.Opinion.NA.Max = CS.Opinion.NA
+        CS.Opinion.NA.Step = 10000
+    }
+
+    CS.TableOption.Enabled = variables[variables$Variables=="CS.TableOption",]$Enabled
+    if (CS.TableOption.Enabled) {
+        CS.TableOption.Min = variables[variables$Variables=="CS.TableOption",]$Min
+        CS.TableOption.Max = variables[variables$Variables=="CS.TableOption",]$Max
+        CS.TableOption.Step = variables[variables$Variables=="CS.TableOption",]$Step
+    } else {
+        CS.TableOption.Min = CS.TableOption
+        CS.TableOption.Max = CS.TableOption
+        CS.TableOption.Step = 10000
+    }
+    
+    TH.MA.Enabled = variables[variables$Variables=="TH.MA",]$Enabled
+    if (TH.MA.Enabled) {
+        TH.MA.Min = variables[variables$Variables=="TH.MA",]$Min
+        TH.MA.Max = variables[variables$Variables=="TH.MA",]$Max
+        TH.MA.Step = variables[variables$Variables=="TH.MA",]$Step
+    } else {
+        TH.MA.Min = TH.MA
+        TH.MA.Max = TH.MA
+        TH.MA.Step = 10000
+    }    
+
+    TH.MinWght.Enabled = variables[variables$Variables=="TH.MinWght",]$Enabled
+    if (TH.MinWght.Enabled) {
+        TH.MinWght.Min = variables[variables$Variables=="TH.MinWght",]$Min
+        TH.MinWght.Max = variables[variables$Variables=="TH.MinWght",]$Max
+        TH.MinWght.Step = variables[variables$Variables=="TH.MinWght",]$Step
+    } else {
+        TH.MinWght.Min = TH.MinWght
+        TH.MinWght.Max = TH.MinWght
+        TH.MinWght.Step = 10000
+    }
+
+    OutPerformMultiple.Enabled = variables[variables$Variables=="OutPerformMultiple",]$Enabled
+    if (OutPerformMultiple.Enabled) {
+        OutPerformMultiple.Min = variables[variables$Variables=="OutPerformMultiple",]$Min
+        OutPerformMultiple.Max = variables[variables$Variables=="OutPerformMultiple",]$Max
+        OutPerformMultiple.Step = variables[variables$Variables=="OutPerformMultiple",]$Step
+    } else {
+        OutPerformMultiple.Min = OutPerformMultiple
+        OutPerformMultiple.Max = OutPerformMultiple
+        OutPerformMultiple.Step = 10000
+    }        
     
     for (i in seq(CS.Opinion.NA.Min, CS.Opinion.NA.Max, CS.Opinion.NA.Step)) {
         for (j in seq(CS.TableOption.Min, CS.TableOption.Max, CS.TableOption.Step)) {
@@ -1003,7 +1056,6 @@ generateMetrics <- function(RF, CMPM, session, fn, Opinion.NA, TableOption, MA, 
     final = data.frame(matrix(ncol=0,nrow=0))
     
     tryCatch({
-        init_var()
         
         # override variable parameters
         CS.Opinion.NA <<- Opinion.NA

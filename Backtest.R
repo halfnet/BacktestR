@@ -27,7 +27,7 @@ ui <- tagList(
                                    actionButton(inputId = "save", 
                                                 label = "SAVE")
                             ),
-                            column(10, 
+                            column(8, 
                                    textOutput("status")
                             )
                         ),
@@ -170,7 +170,7 @@ ui <- tagList(
                                    actionButton(inputId = "CH_go", 
                                                 label = "GO!")
                             ),
-                            column(10, 
+                            column(11, 
                                    textOutput("CH_status")
                             )
                         ),
@@ -213,7 +213,7 @@ ui <- tagList(
                                    actionButton(inputId = "DC_go", 
                                                 label = "GO!")
                             ),
-                            column(10, 
+                            column(11, 
                                    textOutput("DC_status")
                             )
                         ),
@@ -223,9 +223,13 @@ ui <- tagList(
                ),
                tabPanel(title = "Optimization",
                         fluidRow(
-                            column(2, 
-                                   actionButton(inputId = "OPT_gridsearch", 
-                                                label = "Grid Search")
+                            column(1, 
+                                   actionButton(inputId = "OPT_go", 
+                                                label = "GO!")
+                            ),
+                            column(1, 
+                                   actionButton(inputId = "OPT_save", 
+                                                label = "SAVE")
                             ),
                             column(10, 
                                    textOutput("OPT_status")
@@ -235,61 +239,7 @@ ui <- tagList(
                             tags$hr()
                         ),
                         fluidRow(
-                            column(4,
-                                   helpText("Company Score Parameters:"),
-                                   numericInput(inputId = "CS.Opinion.NA.Min", 
-                                                label = "CS.Opinion.NA.Min",
-                                                value = 2),
-                                   numericInput(inputId = "CS.Opinion.NA.Max", 
-                                                label = "CS.Opinion.NA.Max",
-                                                value = 3),
-                                   numericInput(inputId = "CS.Opinion.NA.Step", 
-                                                label = "CS.Opinion.NA.Step",
-                                                value = 1),
-                                   numericInput(inputId = "CS.TableOption.Min", 
-                                                label = "CS.TableOption.Min",
-                                                value = 1),
-                                   numericInput(inputId = "CS.TableOption.Max", 
-                                                label = "CS.TableOption.Max",
-                                                value = 4),
-                                   numericInput(inputId = "CS.TableOption.Step", 
-                                                label = "CS.TableOption.Step",
-                                                value = 1)
-                            ),
-                            column(4, 
-                                   helpText("Threshold Parameters:"),
-                                   numericInput(inputId = "TH.MA.Min", 
-                                                label = "TH.MA.Min",
-                                                value = 3),
-                                   numericInput(inputId = "TH.MA.Max", 
-                                                label = "TH.MA.Max",
-                                                value = 12),
-                                   numericInput(inputId = "TH.MA.Step", 
-                                                label = "TH.MA.Step",
-                                                value = 3),
-                                   numericInput(inputId = "TH.MinWght.Min", 
-                                                label = "TH.MinWght.Min",
-                                                value = 40),
-                                   numericInput(inputId = "TH.MinWght.Max", 
-                                                label = "TH.MinWght.Max",
-                                                value = 60),
-                                   numericInput(inputId = "TH.MinWght.Step", 
-                                                label = "TH.MinWght.Step",
-                                                value = 10)
-                            ),
-                            column(4, 
-                                   helpText("Multiplier Parameters:"),
-                                   numericInput(inputId = "OutPerformMultiple.Min", 
-                                                label = "OutPerformMultiple.Min",
-                                                value = 3),
-                                   numericInput(inputId = "OutPerformMultiple.Max", 
-                                                label = "OutPerformMultiple.Max",
-                                                value = 6),
-                                   numericInput(inputId = "OutPerformMultiple.Step", 
-                                                label = "OutPerformMultiple.Step",
-                                                value = 1)
-                            )
-                            
+                            rHandsontableOutput("variables")
                         )
                ),
                navbarMenu(title = "Other",
@@ -307,11 +257,14 @@ ui <- tagList(
 
 server <- function(input, output, session) {
     
+    # load parameters
     params = read.csv("parameters.csv")
     for(i in 1:nrow(params)) {
         row = params[i,]
         updateTextInput(session, row$name, value = row$value)
     }
+
+    # load threshold limits
     TH.Limits = read.csv("indices.csv")
     for(i in 1:nrow(TH.Limits)) {
         if (grepl("-", TH.Limits$StartFrom[i])) {
@@ -323,7 +276,8 @@ server <- function(input, output, session) {
             break
         }
     }
-    
+
+    # load periods
     UpDownMkts = read.csv("periods.csv")
     for(i in 1:nrow(UpDownMkts)) {
         if (grepl("-", UpDownMkts$Start[i])) {
@@ -336,6 +290,8 @@ server <- function(input, output, session) {
         }
     }
     
+    # load variables for grid search
+    vars = read.csv("variables.csv")
     
     rv <- reactiveValues(
         status = "",
@@ -346,7 +302,8 @@ server <- function(input, output, session) {
         norm = rnorm(500), 
         unif = runif(500),
         chisq = rchisq(500, 2))
-    
+
+    #************* main backtest ***********#
     observeEvent(input$go, {
         disable("go")
         disable("save")
@@ -355,22 +312,6 @@ server <- function(input, output, session) {
         session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = result))
         enable("save")
         enable("go")
-    })
-    
-    observeEvent(input$CH_go, {
-        disable("CH_go")
-        session$sendCustomMessage(type = 'print', message = list(selector = 'CH_status', html = "processing..."))
-        result = processData(input$RootFolder, input$CH_CS.UseFile, input$CH_TH.UseFile, input$CH_ConstructModelPort, input$CH_ConstructModelPortMethod, TRUE, input$CH_OpinionDate, session) 
-        session$sendCustomMessage(type = 'print', message = list(selector = 'CH_status', html = result))
-        enable("CH_go")
-    })
-    
-    observeEvent(input$DC_go, {
-        disable("DC_go")
-        session$sendCustomMessage(type = 'print', message = list(selector = 'DC_status', html = "processing..."))
-        result = checkData(input$RootFolder, session) 
-        session$sendCustomMessage(type = 'print', message = list(selector = 'DC_status', html = result))
-        enable("DC_go")
     })
     
     observeEvent(input$save, {
@@ -382,8 +323,43 @@ server <- function(input, output, session) {
         session$sendCustomMessage(type = 'print', message = list(selector = 'status', html = "saved!"))
     })
 
+    #************* current holdings ***********#
+    observeEvent(input$CH_go, {
+        disable("CH_go")
+        session$sendCustomMessage(type = 'print', message = list(selector = 'CH_status', html = "processing..."))
+        result = processData(input$RootFolder, input$CH_CS.UseFile, input$CH_TH.UseFile, input$CH_ConstructModelPort, input$CH_ConstructModelPortMethod, TRUE, input$CH_OpinionDate, session) 
+        session$sendCustomMessage(type = 'print', message = list(selector = 'CH_status', html = result))
+        enable("CH_go")
+    })
+    
+    #************* data check ***********#
+    observeEvent(input$DC_go, {
+        disable("DC_go")
+        session$sendCustomMessage(type = 'print', message = list(selector = 'DC_status', html = "processing..."))
+        result = checkData(input$RootFolder, session) 
+        session$sendCustomMessage(type = 'print', message = list(selector = 'DC_status', html = result))
+        enable("DC_go")
+    })
+    
+    #************* grid search ***********#
+    observeEvent(input$OPT_go, {
+        disable("OPT_go")
+        session$sendCustomMessage(type = 'print', message = list(selector = 'OPT_status', html = "processing..."))
+        result = gridSearch(input$RootFolder, input$ConstructModelPortMethod, session) 
+        session$sendCustomMessage(type = 'print', message = list(selector = 'OPT_status', html = result))
+        enable("OPT_go")
+    })
+
+    observeEvent(input$OPT_save, {
+        write.table(variables_data(), file = "variables.csv", sep = ",", col.names = TRUE, row.names = FALSE)
+        session$sendCustomMessage(type = 'print', message = list(selector = 'OPT_status', html = "saved!"))
+    })
+    
+    # update status
     output$status <- renderText({rv$status})
     output$CH_status <- renderText({rv$CH_status})
+    output$DC_status <- renderText({rv$DC_status})
+    output$OPT_status <- renderText({rv$OPT_status})
     
     #************* indices editor ***********#
     indices_values = reactiveValues()
@@ -434,7 +410,33 @@ server <- function(input, output, session) {
             hot_context_menu(allowRowEdit = TRUE, allowColEdit = FALSE)
     })
     
+    #************* variables editor ***********#
+    variables_values = reactiveValues()
     
+    variables_data = reactive({
+        if (!is.null(input$variables)) {
+            DF = hot_to_r(input$variables)
+        } else {
+            if (is.null(variables_values[["DF"]]))
+                DF = vars
+            else
+                DF = variables_values[["DF"]]
+        }
+        
+        variables_values[["DF"]] = DF
+        DF
+    })
+    
+    output$variables <- renderRHandsontable({
+        DF = variables_data()
+        if (!is.null(DF))
+            rhandsontable(DF, stretchH = "all") %>%
+            hot_context_menu(allowRowEdit = FALSE, allowColEdit = FALSE)
+    })
+    
+    
+    
+        
     #************* gather all inputs besides tables ***********#
     AllInputs <- reactive({
         x <- reactiveValuesToList(input)
@@ -446,20 +448,6 @@ server <- function(input, output, session) {
     })
     
 
-    #************* grid search ***********#
-    observeEvent(input$OPT_gridsearch, {
-        disable("OPT_gridsearch")
-        session$sendCustomMessage(type = 'print', message = list(selector = 'OPT_status', html = "processing..."))
-        result = gridSearch(input$RootFolder, input$ConstructModelPortMethod, session,
-                            input$CS.Opinion.NA.Min, input$CS.Opinion.NA.Max, input$CS.Opinion.NA.Step, 
-                            input$CS.TableOption.Min, input$CS.TableOption.Max, input$CS.TableOption.Step,
-                            input$TH.MA.Min, input$TH.MA.Max, input$TH.MA.Step,
-                            input$TH.MinWght.Min, input$TH.MinWght.Max, input$TH.MinWght.Step,
-                            input$OutPerformMultiple.Min, input$OutPerformMultiple.Max, input$OutPerformMultiple.Step) 
-        session$sendCustomMessage(type = 'print', message = list(selector = 'OPT_status', html = result))
-        enable("OPT_gridsearch")
-    })
-    
     #************* to be deleted after this ***********#
     
     observeEvent(input$renorm, { rv$norm <- rnorm(500) })
